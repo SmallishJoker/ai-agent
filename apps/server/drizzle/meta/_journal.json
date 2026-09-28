@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1789718340129,
+      "tag": "0000_outstanding_master_chief",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789980535024,
+      "tag": "0001_stale_selene",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790075160524,
+      "tag": "0002_certain_big_bertha",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790151210263,
+      "tag": "0003_stale_amazoness",
+      "breakpoints": true
+    }
+  ]
+}

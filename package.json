@@ -1,0 +1,19 @@
+{
+  "name": "ai-agent-platform",
+  "private": true,
+  "scripts": {
+    "dev:web": "pnpm --filter @ai-agent/web dev",
+    "dev:server": "pnpm --filter @ai-agent/server dev",
+    "dev": "pnpm --filter @ai-agent/web --filter @ai-agent/server --parallel --stream run dev",
+    "build:web": "pnpm --filter @ai-agent/web build",
+    "build:server": "pnpm --filter @ai-agent/server build",
+    "build": "pnpm run build:web && pnpm run build:server",
+    "preview:web": "pnpm --filter @ai-agent/web preview",
+    "preview:server": "pnpm --filter @ai-agent/server preview",
+    "preview": "pnpm --filter @ai-agent/web --filter @ai-agent/server --parallel --stream run preview",
+    "lint": "pnpm --filter @ai-agent/web lint",
+    "typecheck": "pnpm --filter @ai-agent/web typecheck && pnpm --filter @ai-agent/server typecheck",
+    "test": "pnpm --filter @ai-agent/server test"
+  },
+  "packageManager": "pnpm@9.15.1"
+}
