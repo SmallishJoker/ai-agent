@@ -1,6 +1,6 @@
 # AI Agent Platform 开发与教学文档
 
-一个基于 **pnpm workspace** 的全栈 AI Agent 演示项目：前端提供流式对话界面，后端用 Vercel AI SDK 编排大模型、工具调用（Tool Calling）、人工审批（Human-in-the-loop）以及长期记忆（对话摘要）。
+一个基于 **pnpm workspace** 的全栈 AI Agent 演示项目：前端提供流式对话界面，后端用 Vercel AI SDK 编排大模型、工具调用（Tool Calling）、人工审批（Human-in-the-loop）以及长期记忆（会话摘要 + 基于 Embedding 与 pgvector 的语义记忆）。
 
 本文档同时面向两类读者：
 
@@ -39,7 +39,8 @@
 | 工具调用 | 天气、时间、计算器、用户信息、创建工单 |
 | 人工审批 | 创建工单前必须由用户点击「确认 / 拒绝」 |
 | 多轮会话持久化 | 会话与消息存入 PostgreSQL |
-| 长期记忆 | 对话超长后自动滚动生成摘要，注入 System Prompt |
+| 会话摘要 | 对话超长后自动滚动生成摘要，注入 System Prompt |
+| 语义记忆 | 用户长期记忆向量化存入 pgvector，按语义相似度召回（Embedding + 余弦检索） |
 | 会话恢复 | 会话 ID 写入 URL `?c=<id>`，刷新可恢复历史 |
 
 ---
@@ -65,9 +66,15 @@
 - Fastify `5`（HTTP 服务）
 - Vercel AI SDK `ai@7` + `@ai-sdk/openai`（模型编排，兼容任何 OpenAI 协议的服务，如 DeepSeek）
 - Drizzle ORM `0.45` + `pg`（PostgreSQL）
+- PostgreSQL + **pgvector**（向量存储与余弦相似度检索）
+- Embedding：任意 OpenAI 兼容服务（示例：阿里云 DashScope `text-embedding-v4`）
 - Zod `4`（请求校验 + 工具入参 Schema）
 - `tsx watch` 开发热重载
 - Vitest 单元测试（纯逻辑，见 [第 15 节](#15-测试)）
+
+**数据库环境**
+
+- Docker Compose 一键启动 `postgres:18` + pgvector（见 [4.4](#44-启动数据库含-pgvector)）
 
 **共享包 `packages/shared`**
 
@@ -79,8 +86,12 @@
 
 ```
 ai-agent-platform/
-├── package.json                 # 根脚本（dev / build / preview）
+├── package.json                 # 根脚本（dev / build / preview / lint / test）
 ├── pnpm-workspace.yaml          # workspace: apps/*, packages/*
+├── docker-compose.yml           # 数据库服务：postgres:18 + pgvector
+├── docker/postgres/
+│   ├── Dockerfile               # 基于 postgres:18 安装 pgvector
+│   └── init/01-extensions.sql   # 首次初始化自动 CREATE EXTENSION vector
 ├── apps/
 │   ├── web/                     # 前端
 │   │   ├── vite.config.ts       # 端口 5173，/api 代理到 3000
@@ -137,15 +148,17 @@ ai-agent-platform/
 │           │   ├── conversation.ts
 │           │   ├── memory.ts
 │           │   ├── user-memory.ts
+│           │   ├── embedding.ts         # 调用 Embedding 生成向量
+│           │   ├── semantic-memory.ts   # 语义召回（query → 向量 → Top-K）
 │           │   └── message-mapper.ts
 │           ├── repositories/    # 数据访问层
 │           │   ├── conversation.repository.ts
-│           │   └── memory.repository.ts
+│           │   └── memory.repository.ts # 摘要 + 用户记忆 + 向量检索
 │           ├── db/              # Drizzle 连接 & Schema
 │           │   ├── index.ts
 │           │   └── schema.ts
 │           └── config/          # 模型 & 记忆配置
-│               ├── ai.ts
+│               ├── ai.ts        # chat + embedding 客户端
 │               └── memory.ts
 └── packages/shared/src/         # 共享类型
 ```
@@ -162,8 +175,9 @@ ai-agent-platform/
 
 - Node.js 18+（推荐 20+）
 - pnpm 9+
-- 一个 PostgreSQL 数据库
+- 一个 PostgreSQL 数据库（**需启用 pgvector 扩展**；推荐直接用仓库自带的 Docker Compose）
 - 一个兼容 OpenAI 协议的大模型 API（示例使用 DeepSeek）
+- （可选）一个兼容 OpenAI 协议的 Embedding API（用于语义记忆；未配置则自动降级）
 
 ### 4.2 安装依赖
 
@@ -181,15 +195,43 @@ cp apps/server/.env.example apps/server/.env
 
 见 [第 5 节](#5-环境变量)。
 
-### 4.4 初始化数据库
+### 4.4 启动数据库（含 pgvector）
+
+推荐用仓库自带的 Docker Compose。镜像基于 `postgres:18` 预装 pgvector，首次初始化会自动 `CREATE EXTENSION vector`：
 
 ```bash
-pnpm --filter @ai-agent/server db:migrate
+docker compose up -d --build
+
+# 验证 pgvector 已启用
+docker compose exec postgres \
+  psql -U postgres -d ai_agent \
+  -c "SELECT extversion FROM pg_extension WHERE extname='vector';"
+```
+
+默认账号 `postgres / postgres`、库 `ai_agent`、端口 `5432`，可通过根目录 `.env` 的 `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` / `POSTGRES_PORT` 覆盖。
+
+<details>
+<summary>使用自备 PostgreSQL</summary>
+
+确保已安装并启用 pgvector，然后手动创建扩展：
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+迁移文件 `0004` 也会执行 `CREATE EXTENSION IF NOT EXISTS vector`，因此有权限时无需手动创建。
+
+</details>
+
+### 4.5 初始化表结构
+
+```bash
+pnpm --filter @ai-agent/server db:migrate   # 执行迁移（含 CREATE EXTENSION 与向量索引）
 # 或开发期直接同步 schema
 pnpm --filter @ai-agent/server db:push
 ```
 
-### 4.5 启动开发环境
+### 4.6 启动开发环境
 
 ```bash
 pnpm dev          # 同时启动 web + server（并行、带日志流）
@@ -199,14 +241,14 @@ pnpm dev:server   # 只启动后端 http://localhost:3000
 
 前端通过 Vite 代理把 `/api/*` 转发到 `http://localhost:3000`，因此浏览器只需访问 **http://localhost:5173**。
 
-### 4.6 构建与预览
+### 4.7 构建与预览
 
 ```bash
 pnpm build        # 先 build web，再 build server
 pnpm preview      # 同时预览两者
 ```
 
-### 4.7 质量检查
+### 4.8 质量检查
 
 ```bash
 pnpm lint         # 前端 ESLint
@@ -220,21 +262,47 @@ pnpm test         # server 单元测试（vitest）
 
 配置文件：`apps/server/.env`（模板：`apps/server/.env.example`）
 
+**Chat 模型**
+
 | 变量 | 必填 | 说明 |
 | --- | --- | --- |
 | `OPENAI_API_KEY` | 是 | 模型服务密钥 |
 | `OPENAI_BASE_URL` | 是 | 模型服务地址，如 `https://api.deepseek.com` |
 | `OPENAI_MODEL` | 是 | 模型名，如 `deepseek-flash` |
+
+**Embedding（语义记忆用，可留空）**
+
+| 变量 | 必填 | 说明 |
+| --- | --- | --- |
+| `EMBEDDING_API_KEY` | 否 | Embedding 服务密钥；留空则语义记忆自动降级为按 importance 检索 |
+| `EMBEDDING_BASE_URL` | 否 | 如 `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| `EMBEDDING_MODEL` | 否 | 如 `text-embedding-v4` |
+| `EMBEDDING_DIMENSIONS` | 否 | 输出维度，**必须与 `user_memories.embedding` 列一致**，默认 `1536` |
+
+**数据库与记忆**
+
+| 变量 | 必填 | 说明 |
+| --- | --- | --- |
 | `DATABASE_URL` | 是 | PostgreSQL 连接串 |
 | `MEMORY_RECENT_MESSAGES` | 否 | 保留在上下文中的最近消息条数，默认 `10` |
 | `MEMORY_SUMMARY_BATCH` | 否 | 触发摘要所需最少新增消息数，默认 `10` |
 | `USER_MEMORY_LIMIT` | 否 | 注入 Prompt 的用户长期记忆条数上限，默认 `20` |
+| `SEMANTIC_TOP_K` | 否 | 语义召回 Top-K，默认 `5` |
 | `PORT` | 否 | 后端端口，默认 `3000` |
 | `HOST` | 否 | 监听地址，默认 `0.0.0.0` |
 
-> ⚠️ **安全提示**：`.env` 含真实密钥，不应提交到版本库。请确保根目录与 `apps/server` 的 `.gitignore` 忽略 `.env`，仅提交 `.env.example`。本文档不复制任何密钥内容。
+> ⚠️ **安全提示**：`.env` 含真实密钥，已被根 `.gitignore` 忽略，切勿提交；仅提交 `.env.example`。本文档不复制任何密钥内容。
 
-模型客户端在 `apps/server/src/config/ai.ts:4` 创建，基于 OpenAI 兼容协议，因此可无缝切换 DeepSeek / 通义 / Ollama 等。
+模型与 Embedding 客户端都在 `apps/server/src/config/ai.ts` 创建，基于 OpenAI 兼容协议，可无缝切换 DeepSeek / 通义 / Ollama 等。**注意 Chat 与 Embedding 是两套独立配置**——若 Chat 用 DeepSeek（不提供 embedding），必须单独配置 `EMBEDDING_*`。
+
+**DashScope `text-embedding-v4` 示例**：
+
+```bash
+EMBEDDING_API_KEY=<你的 DashScope Key>
+EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+EMBEDDING_MODEL=text-embedding-v4
+EMBEDDING_DIMENSIONS=1536   # v4 默认 1024，这里显式指定 1536 以匹配向量列
+```
 
 ---
 
@@ -252,12 +320,16 @@ pnpm test         # server 单元测试（vitest）
                                │ Vite proxy /api
 ┌──────────────────────────────▼────────────────────────────────┐
 │  Fastify (apps/server)                                        │
-│  路由 app.ts ──► services/ ──► repositories/ ──► Drizzle ──► PG │
+│  routes/ ──► services/ ──► repositories/ ──► Drizzle ──► PG    │
 │                    │                                          │
 │                    ├── agent/runtime.runAgent (streamText)    │
 │                    │        ├── prompts  (System Prompt)      │
 │                    │        └── tools    (5 个工具)           │
-│                    └── agent/summarizer (记忆摘要)            │
+│                    ├── agent/memory-context  (装配记忆上下文) │
+│                    │        ├── summarizer        会话摘要     │
+│                    │        ├── embedding         生成向量     │
+│                    │        └── semantic-memory   余弦召回 ──► pgvector
+│                    └── memory-extractor  (LLM 抽取用户记忆)    │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -291,18 +363,21 @@ POST /api/chat
    ├─ Zod 校验 { conversationId, messages }
    ├─ conversationExists? 否 → 404
    ├─ persistMessages(messages)                    # 先落库用户消息
-   ├─ streamChat(conversationId, messages)
+   ├─ streamChat(conversationId, messages, userId)
    │     ├─ convertToModelMessages(messages)       # UIMessage → ModelMessage
-   │     ├─ buildAgentContext()                    # 读摘要 + 最近消息
+   │     ├─ 取最后一条用户消息文本 currentUserMessage
+   │     ├─ buildAgentContext({ conversationId, userId, currentUserMessage })
+   │     │     └─ buildMemoryContext()  # 会话摘要 + 最近消息 + 语义召回用户记忆
    │     └─ runAgent() → streamText({ tools, stopWhen: stepCountIs(5) })
    │            └─ 模型决定调用工具 → 执行 → 回填结果 → 继续生成（最多 5 步）
    ├─ toUIMessageStream() 转成 UI 流并 SSE 返回
    └─ onEnd:
         ├─ persistMessages(updatedMessages)         # 落库助手消息与工具 parts
-        └─ updateConversationMemory()  (异步、不阻塞响应)
+        ├─ updateConversationMemory()               # 会话摘要（异步、不阻塞响应）
+        └─ updateUserMemoryFromMessages()           # 抽取用户长期记忆 + 生成向量（异步）
 ```
 
-见 `apps/server/src/app.ts:49`。
+见 `apps/server/src/routes/chat.ts`。
 
 ### 7.3 工单审批闭环（Human-in-the-loop）
 
@@ -363,18 +438,20 @@ export function buildApp() {
 | 文件 | 职责 |
 | --- | --- |
 | `index.ts` | `AgentContext` 类型：userId / conversationId / locale / timezone / memory |
-| `context.ts` | `buildAgentContext()`：读取记忆，填充上下文 |
-| `prompts.ts` | `buildAgentSystemPrompt()`：把上下文拼成 System Prompt |
+| `context.ts` | `buildAgentContext()`：调用 `buildMemoryContext` 组装上下文 |
+| `memory-context.ts` | `buildMemoryContext()`：汇总会话摘要 + 最近消息 + 语义召回的用户记忆 |
+| `prompts.ts` | `buildAgentPrompt()`：把上下文拼成 System Prompt |
 | `runtime.ts` | `runAgent()`：调用 `streamText`，挂载 tools 与停止条件 |
 | `summarizer.ts` | `generateConversationSummary()`：合并旧摘要 + 新对话 |
-| `memory.ts` | `AgentMemory` 类型：`{ summary, recentMessages }` |
+| `memory-extractor.ts` | `extractUserMemories()` + `memoryExtractionSchema`：用 LLM 抽取用户记忆 |
+| `memory.ts` | `AgentMemory` / `UserMemory` 类型 |
 
 `runtime.ts` 是编排核心：
 
 ```ts
 streamText({
   model: chatModel,
-  system: buildAgentSystemPrompt(context),
+  system: buildAgentPrompt(context),
   messages,
   tools,
   stopWhen: stepCountIs(5)   // 最多 5 个「模型↔工具」步，防止死循环
@@ -397,11 +474,14 @@ streamText({
 
 ### 8.4 服务与仓储分层
 
-- `services/chat.ts`：`streamChat()` 并行执行「消息转换」与「上下文构建」，再调 `runAgent`。
+- `services/chat.ts`：`streamChat()` 并行执行「消息转换」与「上下文构建」，再调 `runAgent`；并负责取最后一条用户消息文本。
 - `services/conversation.ts`：会话与消息的业务封装，负责 UI 消息 ↔ 数据库行的映射调用。
+- `services/user-memory.ts`：用户长期记忆的读写（`saveUserMemory` 生成向量、`extractAndSaveUserMemories` 抽取并去重、`updateUserMemoryFromMessages`）。
+- `services/embedding.ts`：`generateEmbedding()` 调用 Embedding 模型；未配置或失败返回 `null`（不抛错）。
+- `services/semantic-memory.ts`：`searchRelevantMemories()` 把 query 向量化后交给仓储做余弦检索；无向量时返回 `null`。
 - `services/message-mapper.ts`：`databaseMessageToUIMessage` / `uiMessageToDatabase`，是持久化格式与 AI SDK 格式之间的桥梁。
 - `repositories/conversation.repository.ts`：所有消息/会话 SQL（含按 `seq` 排序、分页取范围、`onConflictDoUpdate` 幂等写入）。
-- `repositories/memory.repository.ts`：摘要的写入与「取最新一条」。
+- `repositories/memory.repository.ts`：会话摘要的写入/读取、用户记忆的增改查，以及 `searchUserMemories` 的 pgvector 余弦检索（`embedding <=> $1::vector`）。
 
 ---
 
@@ -438,14 +518,14 @@ summary = generateConversationSummary({ previousSummary, transcript })
 createConversationSummary(conversationId, summary, summarizedCount=boundary)
 ```
 
-### 9.4 读取与注入（`services/memory-context.ts` → `agent/context.ts` → `agent/prompts.ts`）
+### 9.4 读取与注入（`agent/memory-context.ts` → `agent/context.ts` → `agent/prompts.ts`）
 
 ```
-buildMemoryContext() = { summary: 最新摘要, recentMessages: 最近 N 条 }
+buildMemoryContext() = { summary: 最新摘要, recentMessages: 最近 N 条, userMemories: 语义召回 }
         ↓
 buildAgentContext() = { userId, conversationId, locale, timezone, memory }
         ↓
-buildAgentSystemPrompt() 把 memory.summary 写进「以下是当前会话的历史摘要」
+buildAgentPrompt() 把 memory.summary / userMemories 写进 System Prompt
 ```
 
 ### 9.5 摘要 Prompt 约束（`agent/summarizer.ts`）
@@ -463,12 +543,56 @@ onEnd ──► updateUserMemoryFromMessages(userId, updatedMessages)
               └─ 取最近 4 条消息渲染 transcript
                    └─ extractUserMemories()  generateObject + memoryExtractionSchema
                         └─ shouldRemember=false 或空数组 → 跳过
-                             └─ 逐条去重：已存在则更新 importance/updatedAt，否则插入
+                             └─ 逐条：generateEmbedding(content) → 去重后插入（含向量）
 ```
 
-读取链路：`getUserMemories(userId, USER_MEMORY_LIMIT)` → `buildMemoryContext` → `buildAgentPrompt` 的「用户长期记忆」段落。Prompt 中明确要求「仅在相关时使用、不主动说『我记得你之前说过』」。
-
 抽取约束见 `agent/memory-extractor.ts`：只抽稳定的身份/偏好/项目/约束，不抽一次性闲聊，不重复已有记忆，类型限定 `preference | profile | project | habit | other`，`importance` 取 1-5。
+
+读取链路见 [9.7](#97-语义记忆embedding--pgvector)：优先语义召回，不可用时降级为按 importance 取。Prompt 中明确要求「仅在相关时使用、不主动说『我记得你之前说过』」。
+
+### 9.7 语义记忆（Embedding + pgvector）
+
+前面 9.6 是「全量注入」用户记忆，条目一多就会超出上下文且噪声大。语义记忆的做法是：**把记忆向量化存入 pgvector，回答前先用当前问题做相似度检索，只注入最相关的 Top-K 条。**
+
+**数据模型**：`user_memories.embedding vector(1536)`，并建 HNSW 余弦索引（见 [11.1](#111-schemadbschemats)）。
+
+**写入**（`services/user-memory.ts`）：
+
+```
+saveUserMemory({ userId, content, ... })
+   └─ generateEmbedding(content)        # services/embedding.ts → AI SDK embed()
+        └─ createUserMemory({ ..., embedding })   # 存入 vector 列
+```
+
+**检索**（`services/semantic-memory.ts` → `repositories/memory.repository.ts`）：
+
+```
+searchRelevantMemories(userId, query, topK)
+   ├─ generateEmbedding(query)          # query 向量化
+   └─ searchUserMemories(userId, vector, topK)
+          SELECT ..., 1 - (embedding <=> $1::vector) AS similarity
+          WHERE user_id = $1 AND embedding IS NOT NULL
+          ORDER BY embedding <=> $1::vector
+          LIMIT topK
+```
+
+**装配**（`agent/memory-context.ts`）：
+
+```
+buildMemoryContext(conversationId, userId, currentUserMessage)
+   ├─ 会话摘要（summary）
+   ├─ 最近 N 条消息（recentMessages）
+   └─ searchRelevantMemories(userId, currentUserMessage, SEMANTIC_TOP_K)
+         └─ 若返回 null（未配置 embedding / 调用失败 / 空 query）
+              └─ 降级：getUserMemories(userId, USER_MEMORY_LIMIT)   # 按 importance
+```
+
+**关键设计点**：
+
+- **失败降级**：`generateEmbedding` 捕获异常返回 `null`，因此 Embedding 不可用时对话照常，只是退化为按重要性取记忆。
+- **维度必须一致**：`EMBEDDING_DIMENSIONS` 要和 `vector(N)` 列一致（默认 1536）。若换用默认 1024 维的模型，需改列维度并重新生成迁移。
+- **两套配置独立**：Chat 与 Embedding 是两套 `*_API_KEY/BASE_URL/MODEL`，互不影响（Chat 用 DeepSeek 时，Embedding 需另配）。
+- **HNSW 索引**：加速余弦近邻检索，适合增量写入；小数据量下顺序扫描也可用。
 
 ---
 
@@ -554,11 +678,14 @@ MessageList          遍历消息，渲染气泡 + 「思考中」指示
 | 列 | 类型 | 说明 |
 | --- | --- | --- |
 | `id` | uuid PK | 默认 `gen_random_uuid()` |
-| `user_id` | text | 归属用户 |
+| `user_id` | text | 归属用户（有索引） |
 | `content` | text | 记忆内容 |
 | `type` | text | `preference / profile / project / habit / other`，默认 `preference` |
 | `importance` | integer | 重要度 1-5，默认 1 |
+| `embedding` | vector(1536) | 内容向量，可空；有 **HNSW 余弦索引** |
 | `created_at` / `updated_at` | timestamp | 时间戳 |
+
+> `embedding` 使用自定义 `customType` 定义（`db/schema.ts`），`toDriver` 把 `number[]` 序列化为 `[..]`，`fromDriver` 还原为数组。
 
 ### 11.2 为什么同时存 `content` 和 `parts`？
 
@@ -581,6 +708,8 @@ pnpm --filter @ai-agent/server db:push       # 开发期直接同步（不生成
 | `0001_stale_selene.sql` | `messages` 增加 `seq`/`parts`，建 `conversation_summaries` |
 | `0002_certain_big_bertha.sql` | 建 `user_memories` |
 | `0003_stale_amazoness.sql` | `conversations` 增加 `user_id` + 索引 |
+| `0004_jittery_malcolm_colcord.sql` | `CREATE EXTENSION vector` + `user_memories.embedding vector(1536)` |
+| `0005_dizzy_wraith.sql` | `user_memories` 的 `user_id` 索引 + `embedding` HNSW 余弦索引 |
 
 ---
 
@@ -600,11 +729,26 @@ pnpm --filter @ai-agent/server db:push       # 开发期直接同步（不生成
 
 ### 12.3 调整记忆策略
 
-只改 `.env` 的 `MEMORY_RECENT_MESSAGES` / `MEMORY_SUMMARY_BATCH`（会话摘要）与 `USER_MEMORY_LIMIT`（用户长期记忆条数），无需改代码。
+只改 `.env`，无需改代码：
+
+- 会话摘要：`MEMORY_RECENT_MESSAGES`、`MEMORY_SUMMARY_BATCH`
+- 用户长期记忆：`USER_MEMORY_LIMIT`（降级时的条数）、`SEMANTIC_TOP_K`（语义召回条数）
 
 ### 12.4 更换模型服务
 
 改 `.env` 的 `OPENAI_BASE_URL` 与 `OPENAI_MODEL` 即可；`config/ai.ts` 使用 OpenAI 兼容协议。
+
+### 12.5 更换 / 新增 Embedding 提供方
+
+Embedding 与 Chat 独立配置，只要服务兼容 OpenAI 的 `/embeddings`：
+
+1. 在 `.env` 设置 `EMBEDDING_API_KEY` / `EMBEDDING_BASE_URL` / `EMBEDDING_MODEL`。
+2. 让模型输出维度与 `user_memories.embedding` 列一致：
+   - 若模型支持指定维度（如 DashScope `text-embedding-v4`），设 `EMBEDDING_DIMENSIONS=1536`（代码会通过 `providerOptions.openai.dimensions` 传入）。
+   - 若模型维度固定且不是 1536，改 `db/schema.ts` 的 `vector(N)` → 生成新迁移 → 重建向量索引。
+3. 未配置时语义记忆自动降级，不影响对话。
+
+> 若更换模型导致维度变化，历史向量与新向量不可混用，需要清空或回填 `user_memories.embedding`。
 
 ---
 
@@ -622,6 +766,12 @@ pnpm --filter @ai-agent/server db:push       # 开发期直接同步（不生成
 **Q：工具调用会无限循环吗？**
 不会。`stopWhen: stepCountIs(5)` 限制最多 5 步。
 
+**Q：没有配置 Embedding 会怎样？**
+不影响使用。`generateEmbedding` 返回 `null`，语义检索降级为按 `importance` 取用户记忆（见 [9.7](#97-语义记忆embedding--pgvector)）。
+
+**Q：语义记忆报维度不匹配 / 插入失败？**
+`EMBEDDING_DIMENSIONS` 必须等于 `user_memories.embedding` 的维度（默认 1536）。DashScope `text-embedding-v4` 默认 1024，需要显式设 `EMBEDDING_DIMENSIONS=1536`（代码会透传给服务端）。
+
 **已知注意点 / 可改进项**
 
 - `apps/server/.env` 含真实密钥，已被根 `.gitignore` 忽略，切勿提交；仅提交 `.env.example`。
@@ -629,7 +779,9 @@ pnpm --filter @ai-agent/server db:push       # 开发期直接同步（不生成
 - 前端暂无会话列表 / 历史侧边栏 UI，`GET /api/getAllConversations` 已就绪但未被界面使用。
 - 前后端工具类型需手动保持一致（见 10.4），可考虑把工具 Schema 收敛到 `packages/shared` 统一维护。
 - `createTicket` 与 `getWeather`、`getUserInfo` 均为演示实现：工单只返回模拟号（返回体带 `demo: true`），天气为内置数据，用户信息写死。
-- 用户长期记忆目前按「最近 4 条消息」逐轮抽取，未做语义去重（仅按内容精确去重），可升级为向量检索或 LLM 去重。
+- 用户长期记忆按「最近 4 条消息」逐轮抽取；**去重仍是内容精确匹配**（`findUserMemoryByContent`），未做语义去重。
+- 历史记忆（引入 embedding 之前写入的行）`embedding` 为 NULL，不会被语义检索命中；需要时写回填脚本重新生成向量。
+- 向量维度固定为 1536（`vector(1536)`），更换非 1536 维的 embedding 模型需改列并重建索引。
 
 ---
 
@@ -722,9 +874,15 @@ pnpm test         # server vitest
 | 审批工具示例 | `apps/server/src/tools/createTicket.ts` |
 | 会话摘要逻辑 | `apps/server/src/services/memory.ts` |
 | 用户长期记忆 | `apps/server/src/services/user-memory.ts` |
+| Embedding 生成 | `apps/server/src/services/embedding.ts` |
+| 语义召回 | `apps/server/src/services/semantic-memory.ts` |
+| 记忆装配（含降级） | `apps/server/src/agent/memory-context.ts` |
 | 记忆抽取 Schema | `apps/server/src/agent/memory-extractor.ts` |
+| 向量检索 SQL | `apps/server/src/repositories/memory.repository.ts` |
+| 模型 / Embedding 配置 | `apps/server/src/config/ai.ts` |
 | 数据访问 | `apps/server/src/repositories/conversation.repository.ts` |
 | 表结构 | `apps/server/src/db/schema.ts` |
+| 数据库环境 | `docker-compose.yml`、`docker/postgres/` |
 | 前端对话主容器 | `apps/web/src/features/chat/ChatPage.tsx` |
 | 前端用户 ID | `apps/web/src/lib/user.ts` |
 | 工具 UI 分发 | `apps/web/src/components/chat/ToolPartRenderer.tsx` |

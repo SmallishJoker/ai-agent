@@ -7,3 +7,18 @@ export const openai = createOpenAI({
 });
 
 export const chatModel = openai(process.env.OPENAI_MODEL as string)
+
+const embeddingApiKey = process.env.EMBEDDING_API_KEY
+const embeddingModelId = process.env.EMBEDDING_MODEL
+
+export const embeddingModel =
+    embeddingApiKey && embeddingModelId
+        ? createOpenAI({
+            apiKey: embeddingApiKey,
+            baseURL: process.env.EMBEDDING_BASE_URL
+        }).embedding(embeddingModelId)
+        : null
+
+export const embeddingDimensions = Number(
+    process.env.EMBEDDING_DIMENSIONS ?? 1536
+)

@@ -9,6 +9,27 @@ import {
     timestamp
 } from 'drizzle-orm/pg-core'
 
+import { customType } from 'drizzle-orm/pg-core'
+
+const vector = customType<{
+    data: number[]
+    driverData: string
+}>({
+    dataType() {
+        return 'vector(1536)'
+    },
+
+    toDriver(value) {
+        return `[${value.join(',')}]`
+    },
+
+    fromDriver(value) {
+        return JSON.parse(
+            `[${value.replace(/^\[|\]$/g, '')}]`
+        )
+    }
+})
+
 export const conversations = pgTable('conversations', {
     id: text('id').primaryKey(),
 
@@ -101,7 +122,18 @@ export const userMemories = pgTable('user_memories', {
 
     importance: integer('importance').notNull().default(1),
 
+    embedding: vector('embedding'),
+
     createdAt: timestamp('created_at').defaultNow().notNull(),
 
     updatedAt: timestamp('updated_at').defaultNow().notNull()
-})
+}, table => [
+    index('user_memories_user_id_idx')
+        .on(table.userId),
+
+    index('user_memories_embedding_idx')
+        .using(
+            'hnsw',
+            table.embedding.op('vector_cosine_ops')
+        )
+])

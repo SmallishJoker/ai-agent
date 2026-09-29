@@ -3,16 +3,19 @@ import type { AgentContext } from './index.js'
 
 export interface BuildAgentContextInput {
     conversationId: string
-    userId: string
+    userId: string,
+    currentUserMessage: string
 }
 
 export async function buildAgentContext({
     conversationId,
-    userId
+    userId,
+    currentUserMessage
 }: BuildAgentContextInput): Promise<AgentContext> {
     const memory = await buildMemoryContext(
         conversationId,
-        userId
+        userId,
+        currentUserMessage
     )
 
     return {

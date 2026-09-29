@@ -6,6 +6,24 @@ import {
 import { buildAgentContext } from '../agent/context.js'
 import { runAgent } from '../agent/runtime.js'
 
+function getLastUserText(messages: UIMessage[]) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+
+    if (message.role !== 'user') {
+      continue
+    }
+
+    return message.parts
+      .filter(part => part.type === 'text')
+      .map(part => part.text)
+      .join('')
+      .trim()
+  }
+
+  return ''
+}
+
 export async function streamChat(
   conversationId: string,
   messages: UIMessage[],
@@ -14,7 +32,11 @@ export async function streamChat(
   const [modelMessages, context] =
     await Promise.all([
       convertToModelMessages(messages),
-      buildAgentContext({ conversationId, userId })
+      buildAgentContext({
+        conversationId,
+        userId,
+        currentUserMessage: getLastUserText(messages)
+      })
     ])
 
   return runAgent({

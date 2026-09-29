@@ -8,11 +8,14 @@ import { getConversationSummary } from '../services/memory.js'
 
 import { getUserMemories } from '../services/user-memory.js'
 
+import { searchRelevantMemories } from '../services/semantic-memory.js'
+
 export async function buildMemoryContext(
     conversationId: string,
-    userId: string
+    userId: string,
+    currentUserMessage: string
 ) {
-    const [summary, recentMessages, userMemories] =
+    const [summary, recentMessages, relevantMemories] =
         await Promise.all([
             getConversationSummary(
                 conversationId
@@ -21,10 +24,18 @@ export async function buildMemoryContext(
                 conversationId,
                 memoryConfig.recentMessageLimit
             ),
-            getUserMemories(
-                userId
-            )
+            currentUserMessage.trim().length > 0
+                ? searchRelevantMemories(
+                    userId,
+                    currentUserMessage,
+                    memoryConfig.semanticTopK
+                )
+                : Promise.resolve(null)
         ])
+
+    const userMemories =
+        relevantMemories ??
+        (await getUserMemories(userId))
 
     return {
         summary,

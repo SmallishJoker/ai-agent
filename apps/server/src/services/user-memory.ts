@@ -11,6 +11,8 @@ import {
     updateUserMemory
 } from '../repositories/memory.repository.js'
 
+import { generateEmbedding } from './embedding.js'
+
 function renderMessage(message: UIMessage) {
     const text = message.parts
         .filter(part => part.type === 'text')
@@ -18,9 +20,8 @@ function renderMessage(message: UIMessage) {
         .join('')
         .trim()
 
-    return `${message.role}: ${
-        text.length > 0 ? text : '[非文本内容]'
-    }`
+    return `${message.role}: ${text.length > 0 ? text : '[非文本内容]'
+        }`
 }
 
 export async function getUserMemories(userId: string) {
@@ -36,7 +37,14 @@ export async function saveUserMemory(data: {
     type: string
     importance?: number
 }) {
-    return createUserMemory(data)
+    const embedding = await generateEmbedding(
+        data.content
+    )
+
+    return createUserMemory({
+        ...data,
+        embedding: embedding ?? undefined
+    })
 }
 
 export async function extractAndSaveUserMemories({

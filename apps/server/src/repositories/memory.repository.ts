@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, isNotNull, sql } from 'drizzle-orm'
 import { db } from '../db/index.js'
 import { conversationSummaries, userMemories } from '../db/schema.js'
 
@@ -42,6 +42,7 @@ export async function createUserMemory(data: {
     content: string
     type: string
     importance?: number
+    embedding?: number[]
 }) {
     const [memory] = await db
         .insert(userMemories)
@@ -49,7 +50,8 @@ export async function createUserMemory(data: {
             userId: data.userId,
             content: data.content,
             type: data.type,
-            importance: data.importance ?? 1
+            importance: data.importance ?? 1,
+            embedding: data.embedding
         })
         .returning()
 
@@ -95,6 +97,7 @@ export async function updateUserMemory(
         importance?: number
         content?: string
         type?: string
+        embedding?: number[]
     }
 ) {
     const [row] = await db
@@ -109,10 +112,46 @@ export async function updateUserMemory(
             ...(data.type !== undefined
                 ? { type: data.type }
                 : {}),
+            ...(data.embedding !== undefined
+                ? { embedding: data.embedding }
+                : {}),
             updatedAt: new Date()
         })
         .where(eq(userMemories.id, id))
         .returning()
 
     return row
+}
+
+export async function searchUserMemories(
+    userId: string,
+    embedding: number[],
+    limit = 5
+) {
+    const vector = `[${embedding.join(',')}]`
+
+    const distance = sql`${userMemories.embedding} <=> ${vector}::vector`
+
+    return db
+        .select({
+            id: userMemories.id,
+            userId: userMemories.userId,
+            content: userMemories.content,
+            type: userMemories.type,
+            importance: userMemories.importance,
+            createdAt: userMemories.createdAt,
+            updatedAt: userMemories.updatedAt,
+            similarity: sql<number>`1 - (${distance})`.as(
+                'similarity'
+            )
+        })
+        .from(userMemories)
+        .where(
+            and(
+                eq(userMemories.userId, userId),
+                isNotNull(userMemories.embedding)
+            )
+        )
+        .orderBy(distance)
+        .limit(limit)
 }

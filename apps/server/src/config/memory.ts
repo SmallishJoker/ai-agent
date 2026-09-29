@@ -27,5 +27,10 @@ export const memoryConfig = {
     userMemoryLimit: toPositiveInt(
         process.env.USER_MEMORY_LIMIT,
         20
+    ),
+
+    semanticTopK: toPositiveInt(
+        process.env.SEMANTIC_TOP_K,
+        5
     )
 }
