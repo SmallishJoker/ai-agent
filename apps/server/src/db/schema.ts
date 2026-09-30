@@ -4,6 +4,7 @@ import {
     integer,
     jsonb,
     pgTable,
+    uniqueIndex,
     uuid,
     text,
     timestamp
@@ -136,4 +137,80 @@ export const userMemories = pgTable('user_memories', {
             'hnsw',
             table.embedding.op('vector_cosine_ops')
         )
+])
+
+export const agentRuns = pgTable('agent_runs', {
+    id: uuid('id').defaultRandom().primaryKey(),
+
+    // 给程序和前端使用的公开 Run ID
+    runId: text('run_id').notNull().unique(),
+
+    userId: text('user_id').notNull(),
+
+    conversationId: text('conversation_id')
+        .notNull()
+        .references(() => conversations.id, {
+            onDelete: 'cascade'
+        }),
+
+    status: text('status')
+        .notNull()
+        .default('running'),
+
+    finishReason: text('finish_reason'),
+
+    startedAt: timestamp('started_at')
+        .defaultNow()
+        .notNull(),
+
+    finishedAt: timestamp('finished_at'),
+
+    durationMs: integer('duration_ms'),
+
+    inputTokens: integer('input_tokens'),
+
+    outputTokens: integer('output_tokens'),
+
+    totalTokens: integer('total_tokens'),
+
+    error: text('error'),
+
+    createdAt: timestamp('created_at')
+        .defaultNow()
+        .notNull()
+})
+
+export const agentSteps = pgTable('agent_steps', {
+    id: uuid('id').defaultRandom().primaryKey(),
+
+    runId: text('run_id')
+        .notNull()
+        .references(() => agentRuns.runId, {
+            onDelete: 'cascade'
+        }),
+
+    stepIndex: integer('step_index').notNull(),
+
+    type: text('type').notNull(),
+
+    name: text('name'),
+
+    startedAt: timestamp('started_at').notNull(),
+
+    finishedAt: timestamp('finished_at'),
+
+    durationMs: integer('duration_ms'),
+
+    input: jsonb('input'),
+
+    output: jsonb('output'),
+
+    error: text('error'),
+
+    createdAt: timestamp('created_at')
+        .defaultNow()
+        .notNull()
+}, table => [
+    uniqueIndex('agent_steps_run_id_step_index_idx')
+        .on(table.runId, table.stepIndex)
 ])

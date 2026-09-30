@@ -9,15 +9,29 @@ import { chatModel } from '../config/ai.js'
 import { agentConfig } from '../config/agent.js'
 import { tools } from '../tools/index.js'
 import { buildAgentPrompt } from './prompts.js'
+import { createRunId } from '../utils/run-id.js'
+import { createTimer } from './timer.js'
+import {
+    addAgentStep,
+    createAgentTrace,
+    finishAgentTrace
+} from './trace.js'
 import type { AgentContext } from './index.js'
-import type { AgentStep } from './types.js'
+import type {
+    AgentStep,
+    AgentTrace
+} from './types.js'
 
 export interface AgentInput {
     messages: ModelMessage[]
 
     context?: AgentContext
 
+    runId?: string
+
     onStep?: (step: AgentStep) => void
+
+    onTrace?: (trace: AgentTrace) => void
 }
 
 export function maxToolCallsIs(
@@ -37,27 +51,58 @@ export function maxToolCallsIs(
 export function runAgent({
     messages,
     context,
-    onStep
+    runId,
+    onStep,
+    onTrace
 }: AgentInput) {
+    const trace = createAgentTrace({
+        runId: runId ?? createRunId(),
+        userId: context?.userId ?? 'unknown',
+        conversationId:
+            context?.conversationId ?? 'unknown'
+    })
+
     let index = 0
-    let lastAt = Date.now()
+    let stepTimer = createTimer()
+    let finished = false
 
     const emit = (
         step: Omit<
             AgentStep,
-            'index' | 'startedAt' | 'finishedAt'
+            | 'index'
+            | 'startedAt'
+            | 'finishedAt'
+            | 'durationMs'
         >
     ) => {
-        const now = Date.now()
+        const timing = stepTimer.end()
+        stepTimer = createTimer()
 
-        onStep?.({
+        const agentStep: AgentStep = {
             index: index++,
-            startedAt: lastAt,
-            finishedAt: now,
+            startedAt: timing.startedAt,
+            finishedAt: timing.finishedAt,
+            durationMs: timing.durationMs,
             ...step
-        })
+        }
 
-        lastAt = now
+        addAgentStep(trace, agentStep)
+        onStep?.(agentStep)
+    }
+
+    const finish = (data: {
+        finishReason?: AgentTrace['finishReason']
+        usage?: AgentTrace['usage']
+        error?: string
+    }) => {
+        if (finished) {
+            return
+        }
+
+        finished = true
+
+        finishAgentTrace(trace, data)
+        onTrace?.(trace)
     }
 
     return streamText({
@@ -71,7 +116,7 @@ export function runAgent({
             maxToolCallsIs(agentConfig.maxToolCalls)
         ],
 
-        onStepEnd: () => {
+        onStepStart: () => {
             emit({ type: 'model' })
         },
 
@@ -79,6 +124,11 @@ export function runAgent({
             emit({
                 type: 'tool',
                 toolName: event.toolCall.toolName,
+                input: event.toolCall.input,
+                output:
+                    event.toolOutput.type === 'tool-result'
+                        ? event.toolOutput.output
+                        : undefined,
                 error:
                     event.toolOutput.type === 'tool-error'
                         ? String(event.toolOutput.error)
@@ -91,6 +141,31 @@ export function runAgent({
                 type: 'finish',
                 finishReason: event.finishReason
             })
+
+            finish({
+                finishReason: event.finishReason,
+                usage: {
+                    inputTokens:
+                        event.totalUsage.inputTokens,
+                    outputTokens:
+                        event.totalUsage.outputTokens,
+                    totalTokens:
+                        event.totalUsage.totalTokens
+                }
+            })
+        },
+
+        onError: ({ error }) => {
+            finish({
+                error:
+                    error instanceof Error
+                        ? error.message
+                        : String(error)
+            })
+        },
+
+        onAbort: () => {
+            finish({ error: 'aborted' })
         }
     })
 }

@@ -1,6 +1,7 @@
 import type {
     AgentStep,
-    AgentTrace
+    AgentTrace,
+    AgentUsage
 } from './types.js'
 
 export function createAgentTrace(data: {
@@ -34,14 +35,16 @@ export function addAgentStep(
 export function finishAgentTrace(
     trace: AgentTrace,
     data: {
-        finishReason: AgentTrace['finishReason']
+        finishReason?: AgentTrace['finishReason']
+        usage?: AgentUsage
         error?: string
     }
 ) {
     trace.finishedAt = Date.now()
 
-    trace.finishReason =
-        data.finishReason
+    trace.finishReason = data.finishReason
+
+    trace.usage = data.usage
 
     trace.error = data.error
 

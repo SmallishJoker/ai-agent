@@ -5,7 +5,18 @@ import {
 
 import { buildAgentContext } from '../agent/context.js'
 import { runAgent } from '../agent/runtime.js'
-import type { AgentStep } from '../agent/types.js'
+import type {
+  AgentStep,
+  AgentTrace
+} from '../agent/types.js'
+
+export interface StreamChatOptions {
+  runId?: string
+
+  onStep?: (step: AgentStep) => void
+
+  onTrace?: (trace: AgentTrace) => void
+}
 
 function getLastUserText(messages: UIMessage[]) {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -29,7 +40,7 @@ export async function streamChat(
   conversationId: string,
   messages: UIMessage[],
   userId: string,
-  onStep?: (step: AgentStep) => void
+  options: StreamChatOptions = {}
 ) {
   const [modelMessages, context] =
     await Promise.all([
@@ -44,6 +55,8 @@ export async function streamChat(
   return runAgent({
     messages: modelMessages,
     context,
-    onStep
+    runId: options.runId,
+    onStep: options.onStep,
+    onTrace: options.onTrace
   })
 }

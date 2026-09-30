@@ -26,7 +26,21 @@ export interface AgentStep {
 
     finishedAt?: number
 
+    durationMs?: number
+
+    input?: unknown
+
+    output?: unknown
+
     error?: string
+}
+
+export interface AgentUsage {
+    inputTokens?: number
+
+    outputTokens?: number
+
+    totalTokens?: number
 }
 
 export interface AgentTrace {
@@ -44,25 +58,7 @@ export interface AgentTrace {
 
     finishReason?: AgentFinishReason
 
-    error?: string
-}
-
-export interface AgentStep {
-    index: number
-
-    type: AgentStepType
-
-    name?: string
-
-    startedAt: number
-
-    finishedAt?: number
-
-    durationMs?: number
-
-    input?: unknown
-
-    output?: unknown
+    usage?: AgentUsage
 
     error?: string
 }

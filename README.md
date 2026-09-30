@@ -423,6 +423,7 @@ export function buildApp() {
 | GET | `/api/getAllConversations?userId=` | 列出当前用户的会话 |
 | POST | `/api/conversations` | 新建会话（body 必带 `userId`），默认标题「新对话」 |
 | GET | `/api/conversations/:id/messages?userId=` | 加载当前用户的会话及消息 |
+| GET | `/api/agent-runs/:runId` | 查询某次 Agent 运行的完整轨迹（调试用） |
 
 所有会话接口都按 `userId` 做归属过滤：会话不属于该用户时返回 404，从而避免越权读取。用户身份采用轻量方案：前端 `lib/user.ts` 在 localStorage 生成并持久化一个 UUID，随请求发送（非鉴权，生产环境应替换为服务端签发的身份）。
 
@@ -472,6 +473,8 @@ streamText({
 
 新增工具只需：在 `tools/` 新建文件 → 在 `tools/index.ts` 注册进 `tools` 对象 → 在 `apps/web/src/types/chat.ts` 补类型 → 在 `ToolPartRenderer.tsx` 补渲染分支。
 
+`tools/index.ts` 用 `withSafeExecution()` 统一包裹每个工具的 `execute`：内部经 `agent/tool-executor.ts` 的 `executeToolSafely()` 执行——成功返回原始结果（形状不变），失败则抛出错误交给 AI SDK 生成 `output-error`，便于集中处理与记录。
+
 ### 8.4 服务与仓储分层
 
 - `services/chat.ts`：`streamChat()` 并行执行「消息转换」与「上下文构建」，再调 `runAgent`；并负责取最后一条用户消息文本。
@@ -482,6 +485,51 @@ streamText({
 - `services/message-mapper.ts`：`databaseMessageToUIMessage` / `uiMessageToDatabase`，是持久化格式与 AI SDK 格式之间的桥梁。
 - `repositories/conversation.repository.ts`：所有消息/会话 SQL（含按 `seq` 排序、分页取范围、`onConflictDoUpdate` 幂等写入）。
 - `repositories/memory.repository.ts`：会话摘要的写入/读取、用户记忆的增改查，以及 `searchUserMemories` 的 pgvector 余弦检索（`embedding <=> $1::vector`）。
+- `services/agent-trace.ts`：Agent 运行轨迹的入库（`startAgentRun` / `recordAgentStep` / `completeAgentRun` / `getAgentTrace`）。
+- `repositories/agent-trace.repository.ts`：`agent_runs` / `agent_steps` 两张表的读写。
+
+### 8.5 Agent 运行轨迹（Trace）
+
+为了可观测与调试，每次对话都会把 Agent 的运行过程落库。
+
+**数据结构**（`db/schema.ts`）
+
+- `agent_runs`：一次运行一行。`run_id`（`run_<uuid>` 公开令牌，唯一）、`user_id`、`conversation_id`、`status`(`running`/`completed`/`failed`)、`finish_reason`、`started_at`/`finished_at`、`duration_ms`、token 统计、`error`。
+- `agent_steps`：一次运行多行。`run_id`（外键指向 `agent_runs.run_id`）、`step_index`、`type`(`model`/`tool`/`finish`)、`name`（工具名）、`started_at`/`finished_at`/`duration_ms`、`input`/`output`(jsonb)、`error`。
+
+**采集流程**（`agent/runtime.ts`）
+
+```
+runAgent()
+  ├─ createRunId() + createAgentTrace()        # 整次运行的轨迹对象
+  ├─ onStepEnd        → emit('model')           # 每个模型步
+  ├─ onToolExecutionEnd → emit('tool', name, error?)  # 每个工具调用（含耗时）
+  └─ onFinish         → emit('finish', finishReason) + finishAgentTrace() + onTrace()
+```
+
+**落库与下发**（`routes/chat.ts`）
+
+```
+execute({ writer })
+  ├─ startAgentRun({ userId, conversationId })  # 先建 agent_runs 行，拿到 runId
+  ├─ writer.write({ type: 'data-agentRun', data: { runId } })   # runId 下发前端
+  ├─ streamChat(..., { runId, onStep, onTrace })
+  │     ├─ onStep  → recordAgentStep(...) 入库 + writer.write('data-agentStep') 流式给前端
+  │     └─ onTrace → logAgentTrace() 结构化日志 + completeAgentRun(status/finishReason/durationMs)
+  └─ writer.merge(toUIMessageStream(...))
+```
+
+持久化为**即发即忘**（`void ... .catch()`），记录失败只记日志，不影响对话。`runId` 通过 `data-agentRun` 数据块随流下发并随消息持久化，前端据此调用 `GET /api/agent-runs/:runId`（刷新后仍可用）。
+
+**持久化细节**
+
+- `agent_steps` 记录工具的 `input` / `output`（jsonb）；`data-agentStep` 为 `transient`，只在实时流中传输、不写入消息，避免膨胀。
+- 外键均为 `ON DELETE CASCADE`：删除会话会自动清理其 `agent_runs` / `agent_steps`。
+- `(run_id, step_index)` 唯一索引防止并发重复写入同一步骤。
+- 运行失败或中断时由 `onError` / `onAbort` 收尾，`status` 记为 `failed` 并保存 `error`。
+- 结束时 `logAgentTrace()` 通过 Fastify 的 pino 日志输出结构化 `agent_trace` 记录。
+
+**前端调试**：助手消息右上角的「🐞 调试」按钮可展开该次运行的完整轨迹面板（`components/agent/AgentTrace.tsx`），展示 status / finishReason / duration / steps / tokens / error 以及每个 step 的类型、名称、耗时与错误。
 
 ---
 
@@ -687,6 +735,34 @@ MessageList          遍历消息，渲染气泡 + 「思考中」指示
 
 > `embedding` 使用自定义 `customType` 定义（`db/schema.ts`），`toDriver` 把 `number[]` 序列化为 `[..]`，`fromDriver` 还原为数组。
 
+**`agent_runs`**（Agent 运行轨迹头）
+
+| 列 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | uuid PK | 内部主键 |
+| `run_id` | text 唯一 | 公开令牌 `run_<uuid>` |
+| `user_id` | text | 归属用户 |
+| `conversation_id` | text FK | 指向 `conversations.id` |
+| `status` | text | `running` / `completed` / `failed`，默认 `running` |
+| `finish_reason` | text | AI SDK 的 finishReason，如 `stop` / `tool-calls` |
+| `started_at` / `finished_at` | timestamp | 起止时间 |
+| `duration_ms` | integer | 总耗时 |
+| `input_tokens` / `output_tokens` / `total_tokens` | integer | token 统计 |
+| `error` | text | 失败信息 |
+
+**`agent_steps`**（Agent 运行轨迹明细）
+
+| 列 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | uuid PK | 内部主键 |
+| `run_id` | text FK | 指向 `agent_runs.run_id` |
+| `step_index` | integer | 步骤序号（从 0 开始） |
+| `type` | text | `model` / `tool` / `finish` |
+| `name` | text | 工具名（tool 步骤） |
+| `started_at` / `finished_at` / `duration_ms` | timestamp / integer | 该步耗时 |
+| `input` / `output` | jsonb | 工具入参 / 出参 |
+| `error` | text | 该步错误信息 |
+
 ### 11.2 为什么同时存 `content` 和 `parts`？
 
 - `parts` 是「真相」，用于完整恢复工具调用 UI。
@@ -710,6 +786,8 @@ pnpm --filter @ai-agent/server db:push       # 开发期直接同步（不生成
 | `0003_stale_amazoness.sql` | `conversations` 增加 `user_id` + 索引 |
 | `0004_jittery_malcolm_colcord.sql` | `CREATE EXTENSION vector` + `user_memories.embedding vector(1536)` |
 | `0005_dizzy_wraith.sql` | `user_memories` 的 `user_id` 索引 + `embedding` HNSW 余弦索引 |
+| `0006_rich_jack_power.sql` | 建 `agent_runs` / `agent_steps`（Agent 运行轨迹） |
+| `0007_minor_toad_men.sql` | 轨迹外键改为 `ON DELETE CASCADE` + `(run_id, step_index)` 唯一索引 |
 
 ---
 
@@ -879,6 +957,11 @@ pnpm test         # server vitest
 | 记忆装配（含降级） | `apps/server/src/agent/memory-context.ts` |
 | 记忆抽取 Schema | `apps/server/src/agent/memory-extractor.ts` |
 | 向量检索 SQL | `apps/server/src/repositories/memory.repository.ts` |
+| Agent 轨迹采集 | `apps/server/src/agent/runtime.ts` |
+| Agent 轨迹入库 | `apps/server/src/services/agent-trace.ts`、`apps/server/src/repositories/agent-trace.repository.ts` |
+| Agent 轨迹查询接口 | `apps/server/src/routes/agent-runs.ts` |
+| 工具安全执行 | `apps/server/src/agent/tool-executor.ts` |
+| 前端调试轨迹面板 | `apps/web/src/components/agent/AgentTrace.tsx` |
 | 模型 / Embedding 配置 | `apps/server/src/config/ai.ts` |
 | 数据访问 | `apps/server/src/repositories/conversation.repository.ts` |
 | 表结构 | `apps/server/src/db/schema.ts` |

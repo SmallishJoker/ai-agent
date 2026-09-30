@@ -17,11 +17,17 @@ export interface AgentStep {
 
     finishedAt?: number
 
+    durationMs?: number
+
     error?: string
 }
 
 export type ChatUIDataTypes = {
     agentStep: AgentStep
+
+    agentRun: {
+        runId: string
+    }
 }
 
 export type { Conversation }
@@ -123,3 +129,37 @@ export type ChatUIMessage = UIMessage<
     ChatUIDataTypes,
     ChatUITools
 >
+
+export interface AgentTraceRun {
+    id: string
+    runId: string
+    userId: string
+    conversationId: string
+    status: string
+    finishReason?: string | null
+    startedAt: string
+    finishedAt?: string | null
+    durationMs?: number | null
+    inputTokens?: number | null
+    outputTokens?: number | null
+    totalTokens?: number | null
+    error?: string | null
+}
+
+export interface AgentTraceStep {
+    id: string
+    stepIndex: number
+    type: string
+    name?: string | null
+    startedAt: string
+    finishedAt?: string | null
+    durationMs?: number | null
+    input?: unknown
+    output?: unknown
+    error?: string | null
+}
+
+export interface AgentTraceResponse {
+    run: AgentTraceRun
+    steps: AgentTraceStep[]
+}

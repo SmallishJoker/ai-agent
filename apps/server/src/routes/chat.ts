@@ -9,12 +9,20 @@ import {
 
 import { chatRequestSchema } from '../schemas/chat.js'
 
+import { logAgentTrace } from '../agent/trace-logger.js'
+
 import { streamChat } from '../services/chat.js'
 
 import {
     conversationExists,
     persistMessages
 } from '../services/conversation.js'
+
+import {
+    completeAgentRun,
+    recordAgentStep,
+    startAgentRun
+} from '../services/agent-trace.js'
 
 import {
     updateConversationMemory
@@ -65,20 +73,128 @@ export const chatRoutes: FastifyPluginAsync = async app => {
                 originalMessages: messages,
 
                 execute: async ({ writer }) => {
+                    let runId: string | null = null
+
+                    try {
+                        runId = await startAgentRun({
+                            userId,
+                            conversationId
+                        })
+
+                        writer.write({
+                            type: 'data-agentRun',
+                            data: { runId }
+                        })
+                    } catch (runError) {
+                        request.log.error(
+                            runError,
+                            'Failed to start agent run'
+                        )
+                    }
+
                     const result = await streamChat(
                         conversationId,
                         messages,
                         userId,
-                        step => {
-                            request.log.info(
-                                { agentStep: step },
-                                'agent step'
-                            )
+                        {
+                            runId: runId ?? undefined,
 
-                            writer.write({
-                                type: 'data-agentStep',
-                                data: step
-                            })
+                            onStep: step => {
+                                const {
+                                    input,
+                                    output,
+                                    ...streamStep
+                                } = step
+
+                                request.log.info(
+                                    { agentStep: streamStep },
+                                    'agent step'
+                                )
+
+                                writer.write({
+                                    type: 'data-agentStep',
+                                    data: streamStep,
+                                    transient: true
+                                })
+
+                                if (!runId) {
+                                    return
+                                }
+
+                                void recordAgentStep({
+                                    runId,
+                                    stepIndex: step.index,
+                                    type: step.type,
+                                    name: step.toolName,
+                                    startedAt: new Date(
+                                        step.startedAt
+                                    ),
+                                    finishedAt:
+                                        step.finishedAt !==
+                                            undefined
+                                            ? new Date(
+                                                step.finishedAt
+                                            )
+                                            : undefined,
+                                    durationMs:
+                                        step.durationMs,
+                                    input,
+                                    output,
+                                    error: step.error
+                                }).catch(stepError => {
+                                    request.log.error(
+                                        stepError,
+                                        'Failed to record agent step'
+                                    )
+                                })
+                            },
+
+                            onTrace: trace => {
+                                logAgentTrace(
+                                    trace,
+                                    (payload, message) =>
+                                        request.log.info(
+                                            payload,
+                                            message
+                                        )
+                                )
+
+                                if (!runId) {
+                                    return
+                                }
+
+                                void completeAgentRun(
+                                    runId,
+                                    {
+                                        status: trace.error
+                                            ? 'failed'
+                                            : 'completed',
+                                        finishReason:
+                                            trace.finishReason,
+                                        durationMs:
+                                            trace.finishedAt !==
+                                                undefined
+                                                ? trace.finishedAt -
+                                                trace.startedAt
+                                                : undefined,
+                                        inputTokens:
+                                            trace.usage
+                                                ?.inputTokens,
+                                        outputTokens:
+                                            trace.usage
+                                                ?.outputTokens,
+                                        totalTokens:
+                                            trace.usage
+                                                ?.totalTokens,
+                                        error: trace.error
+                                    }
+                                ).catch(runError => {
+                                    request.log.error(
+                                        runError,
+                                        'Failed to complete agent run'
+                                    )
+                                })
+                            }
                         }
                     )
 
@@ -87,36 +203,37 @@ export const chatRoutes: FastifyPluginAsync = async app => {
                             stream: result.stream,
                             originalMessages: messages,
                             generateMessageId: () =>
-                                crypto.randomUUID(),
-                            onEnd: async ({
-                                messages: updatedMessages
-                            }) => {
-                                await persistMessages(
-                                    conversationId,
-                                    updatedMessages
-                                )
-
-                                void updateConversationMemory(
-                                    conversationId
-                                ).catch(memoryError => {
-                                    request.log.error(
-                                        memoryError,
-                                        'Failed to update conversation memory'
-                                    )
-                                })
-
-                                void updateUserMemoryFromMessages(
-                                    userId,
-                                    updatedMessages
-                                ).catch(memoryError => {
-                                    request.log.error(
-                                        memoryError,
-                                        'Failed to update user memory'
-                                    )
-                                })
-                            }
+                                crypto.randomUUID()
                         })
                     )
+                },
+
+                onEnd: async ({
+                    messages: updatedMessages
+                }) => {
+                    await persistMessages(
+                        conversationId,
+                        updatedMessages
+                    )
+
+                    void updateConversationMemory(
+                        conversationId
+                    ).catch(memoryError => {
+                        request.log.error(
+                            memoryError,
+                            'Failed to update conversation memory'
+                        )
+                    })
+
+                    void updateUserMemoryFromMessages(
+                        userId,
+                        updatedMessages
+                    ).catch(memoryError => {
+                        request.log.error(
+                            memoryError,
+                            'Failed to update user memory'
+                        )
+                    })
                 }
             })
 

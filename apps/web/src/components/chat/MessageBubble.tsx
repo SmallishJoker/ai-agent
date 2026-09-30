@@ -1,8 +1,14 @@
+import { useState } from 'react'
+
+import { Bug } from 'lucide-react'
+
 import type { ChatAddToolApproveResponseFunction } from 'ai'
 
 import type { ChatUIMessage } from '@/types/chat'
 
-import AgentTrace from './AgentTrace'
+import { Button } from '@/components/ui/button'
+
+import AgentTrace from '../agent/AgentTrace'
 
 import MarkdownRenderer from './MarkdownRenderer'
 
@@ -21,9 +27,12 @@ function MessageBubble({
   const isUser =
     message.role === 'user'
 
-  const steps = message.parts
-    .filter(part => part.type === 'data-agentStep')
-    .map(part => part.data)
+  const runId = message.parts.find(
+    part => part.type === 'data-agentRun'
+  )?.data.runId
+
+  const [showTrace, setShowTrace] =
+    useState(false)
 
   return (
     <div
@@ -40,7 +49,26 @@ function MessageBubble({
             : 'max-w-[80%] px-1 py-3'
         }
       >
-        {!isUser && <AgentTrace steps={steps} />}
+        {!isUser && runId && (
+          <div className="mb-2 flex justify-end">
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() =>
+                setShowTrace(value => !value)
+              }
+            >
+              <Bug />
+              {showTrace ? '收起轨迹' : '调试'}
+            </Button>
+          </div>
+        )}
+
+        {!isUser && showTrace && runId && (
+          <div className="my-3 rounded-xl border bg-muted/30 p-3">
+            <AgentTrace runId={runId} />
+          </div>
+        )}
 
         {message.parts.map(
           (part, index) => {
@@ -63,7 +91,8 @@ function MessageBubble({
             }
 
             if (
-              part.type === 'data-agentStep'
+              part.type === 'data-agentStep' ||
+              part.type === 'data-agentRun'
             ) {
               return null
             }
