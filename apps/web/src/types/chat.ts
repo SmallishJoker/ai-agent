@@ -1,9 +1,28 @@
 import type {
-    UIDataTypes,
     UIMessage
 } from 'ai'
 
 import type { Conversation } from '@ai-agent/shared'
+
+export interface AgentStep {
+    index: number
+
+    type: 'model' | 'tool' | 'finish'
+
+    toolName?: string
+
+    finishReason?: string
+
+    startedAt: number
+
+    finishedAt?: number
+
+    error?: string
+}
+
+export type ChatUIDataTypes = {
+    agentStep: AgentStep
+}
 
 export type { Conversation }
 
@@ -101,6 +120,6 @@ export type ChatUITools = {
 
 export type ChatUIMessage = UIMessage<
     never,
-    UIDataTypes,
+    ChatUIDataTypes,
     ChatUITools
 >

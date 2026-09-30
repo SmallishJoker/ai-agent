@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify'
 
 import {
+    createUIMessageStream,
     createUIMessageStreamResponse,
     toUIMessageStream,
     type UIMessage
@@ -60,47 +61,68 @@ export const chatRoutes: FastifyPluginAsync = async app => {
                 messages
             )
 
-            const result = await streamChat(
-                conversationId,
-                messages,
-                userId
-            )
+            const stream = createUIMessageStream({
+                originalMessages: messages,
+
+                execute: async ({ writer }) => {
+                    const result = await streamChat(
+                        conversationId,
+                        messages,
+                        userId,
+                        step => {
+                            request.log.info(
+                                { agentStep: step },
+                                'agent step'
+                            )
+
+                            writer.write({
+                                type: 'data-agentStep',
+                                data: step
+                            })
+                        }
+                    )
+
+                    writer.merge(
+                        toUIMessageStream({
+                            stream: result.stream,
+                            originalMessages: messages,
+                            generateMessageId: () =>
+                                crypto.randomUUID(),
+                            onEnd: async ({
+                                messages: updatedMessages
+                            }) => {
+                                await persistMessages(
+                                    conversationId,
+                                    updatedMessages
+                                )
+
+                                void updateConversationMemory(
+                                    conversationId
+                                ).catch(memoryError => {
+                                    request.log.error(
+                                        memoryError,
+                                        'Failed to update conversation memory'
+                                    )
+                                })
+
+                                void updateUserMemoryFromMessages(
+                                    userId,
+                                    updatedMessages
+                                ).catch(memoryError => {
+                                    request.log.error(
+                                        memoryError,
+                                        'Failed to update user memory'
+                                    )
+                                })
+                            }
+                        })
+                    )
+                }
+            })
 
             const response =
                 createUIMessageStreamResponse({
-                    stream: toUIMessageStream({
-                        stream: result.stream,
-                        originalMessages: messages,
-                        generateMessageId: () =>
-                            crypto.randomUUID(),
-                        onEnd: async ({
-                            messages: updatedMessages
-                        }) => {
-                            await persistMessages(
-                                conversationId,
-                                updatedMessages
-                            )
-
-                            void updateConversationMemory(
-                                conversationId
-                            ).catch(memoryError => {
-                                request.log.error(
-                                    memoryError,
-                                    'Failed to update conversation memory'
-                                )
-                            })
-
-                            void updateUserMemoryFromMessages(
-                                userId,
-                                updatedMessages
-                            ).catch(memoryError => {
-                                request.log.error(
-                                    memoryError,
-                                    'Failed to update user memory'
-                                )
-                            })
-                        }
-                    })
+                    stream
                 })
 
             reply

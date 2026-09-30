@@ -2,6 +2,8 @@ import type { ChatAddToolApproveResponseFunction } from 'ai'
 
 import type { ChatUIMessage } from '@/types/chat'
 
+import AgentTrace from './AgentTrace'
+
 import MarkdownRenderer from './MarkdownRenderer'
 
 import ToolPartRenderer from './ToolPartRenderer'
@@ -19,6 +21,10 @@ function MessageBubble({
   const isUser =
     message.role === 'user'
 
+  const steps = message.parts
+    .filter(part => part.type === 'data-agentStep')
+    .map(part => part.data)
+
   return (
     <div
       className={
@@ -34,6 +40,8 @@ function MessageBubble({
             : 'max-w-[80%] px-1 py-3'
         }
       >
+        {!isUser && <AgentTrace steps={steps} />}
+
         {message.parts.map(
           (part, index) => {
             if (
@@ -52,6 +60,12 @@ function MessageBubble({
                   content={part.text}
                 />
               )
+            }
+
+            if (
+              part.type === 'data-agentStep'
+            ) {
+              return null
             }
 
             return (

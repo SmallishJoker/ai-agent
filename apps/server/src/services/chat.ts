@@ -5,6 +5,7 @@ import {
 
 import { buildAgentContext } from '../agent/context.js'
 import { runAgent } from '../agent/runtime.js'
+import type { AgentStep } from '../agent/types.js'
 
 function getLastUserText(messages: UIMessage[]) {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -27,7 +28,8 @@ function getLastUserText(messages: UIMessage[]) {
 export async function streamChat(
   conversationId: string,
   messages: UIMessage[],
-  userId: string
+  userId: string,
+  onStep?: (step: AgentStep) => void
 ) {
   const [modelMessages, context] =
     await Promise.all([
@@ -41,6 +43,7 @@ export async function streamChat(
 
   return runAgent({
     messages: modelMessages,
-    context
+    context,
+    onStep
   })
 }
