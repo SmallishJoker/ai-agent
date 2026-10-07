@@ -1,25 +1,11 @@
-import {
-    Bot,
-    Circle
-  } from 'lucide-react'
+import { SidebarTrigger } from "@/components/ui/sidebar"
   
   function ChatHeader() {
     return (
-      <header className="flex h-14 items-center border-b px-6">
+      <header className="flex min-h-12 items-center px-2 sticky top-0">
         <div className="flex items-center gap-3">
-          <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <Bot className="size-4" />
-          </div>
-  
-          <div>
-            <div className="font-semibold">
-              AI Agent
-            </div>
-  
-            <div className="flex items-center gap-1 text-xs text-muted-foreground">
-              <Circle className="size-2 fill-current" />
-              Online
-            </div>
+          <div className="flex size-8 items-center justify-center">
+            <SidebarTrigger className="m-2 sticky t-[2]" />
           </div>
         </div>
       </header>

@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -6,208 +7,116 @@ import {
 } from 'react'
 
 import {
-  DefaultChatTransport,
-  lastAssistantMessageIsCompleteWithApprovalResponses
-} from 'ai'
-
-import {
-  useChat
-} from '@ai-sdk/react'
+  Outlet,
+  useLocation,
+  useNavigate,
+  useSearchParams
+} from 'react-router-dom'
 
 import ChatHeader from '@/components/chat/ChatHeader'
-import ChatInput from '@/components/chat/ChatInput'
-import MessageList from '@/components/chat/MessageList'
+import { SidebarProvider } from '@/components/ui/sidebar'
+import { AppSidebar } from '@/features/side/AppSidebar'
+
+import { getAllConversations } from '@/services/conversation'
 
 import {
-  createConversation,
-  getConversation
-} from '@/services/conversation'
+  getConversationIdFromPath,
+  getConversationPath
+} from '@/lib/route'
 
 import { getUserId } from '@/lib/user'
 
-import type { ChatUIMessage } from '@/types/chat'
+import type { Conversation } from '@/types/chat'
 
 function ChatPage() {
   const userId = useMemo(() => getUserId(), [])
+  const navigate = useNavigate()
+  const location = useLocation()
+  const [searchParams] = useSearchParams()
 
-  const initializedRef = useRef(false)
+  const activeConversationId =
+    getConversationIdFromPath(location.pathname)
 
-  const [conversationId, setConversationId] =
-    useState<string | null>(null)
+  const [conversations, setConversations] =
+    useState<Conversation[]>([])
 
-  const [isInitializing, setIsInitializing] =
+  const [conversationsLoading, setConversationsLoading] =
     useState(true)
 
-  const transport = useMemo(
-    () =>
-      new DefaultChatTransport<ChatUIMessage>({
-        api: '/api/chat',
+  const refreshSeqRef = useRef(0)
 
-        prepareSendMessagesRequest: ({
-          id,
-          messages: requestMessages,
-          trigger,
-          messageId,
-          body
-        }) => ({
-          body: {
-            ...body,
-            id,
-            messages: requestMessages,
-            userId,
-            trigger,
-            messageId,
-            conversationId
-          }
-        })
-      }),
-    [userId, conversationId]
-  )
+  const refreshConversations = useCallback(
+    async () => {
+      const seq = ++refreshSeqRef.current
 
-  const {
-    messages,
-    sendMessage,
-    setMessages,
-    status,
-    error,
-    addToolApprovalResponse
-  } = useChat<ChatUIMessage>({
-    transport,
-
-    sendAutomaticallyWhen:
-      lastAssistantMessageIsCompleteWithApprovalResponses
-  })
-
-  useEffect(() => {
-    if (initializedRef.current) {
-      return
-    }
-
-    initializedRef.current = true
-
-    async function init() {
       try {
-        const url = new URL(
-          window.location.href
-        )
+        const data = await getAllConversations(userId)
 
-        const existingId =
-          url.searchParams.get('c')
-
-        if (existingId) {
-          try {
-            const data = await getConversation(
-              existingId,
-              userId
-            )
-
-            setConversationId(existingId)
-
-            setMessages(data.messages)
-            return
-          } catch {
-            url.searchParams.delete('c')
-          }
+        // Ignore responses that arrive out of order.
+        if (seq !== refreshSeqRef.current) {
+          return
         }
 
-        const data = await createConversation(userId)
-
-        setConversationId(data.conversation.id)
-
-        url.searchParams.set(
-          'c',
-          data.conversation.id
-        )
-
-        window.history.replaceState(
-          null,
-          '',
-          url.toString()
-        )
-      } catch (initError) {
-        console.error(initError)
+        setConversations(data.conversations)
+      } catch (conversationsError) {
+        console.error(conversationsError)
       } finally {
-        setIsInitializing(false)
+        if (seq === refreshSeqRef.current) {
+          setConversationsLoading(false)
+        }
       }
+    },
+    [userId]
+  )
+
+  useEffect(() => {
+    async function load() {
+      await refreshConversations()
     }
 
-    init()
-  }, [setMessages, userId])
+    void load()
+  }, [refreshConversations])
 
-  const [
-    input,
-    setInput
-  ] = useState('')
+  useEffect(() => {
+    const legacyId = searchParams.get('c')
 
-  const loading =
-    status === 'submitted' ||
-    status === 'streaming'
-
-  const handleSubmit = () => {
-    const content =
-      input.trim()
-
-    if (
-      !content ||
-      loading ||
-      !conversationId
-    ) {
-      return
+    if (legacyId) {
+      navigate(getConversationPath(legacyId), {
+        replace: true
+      })
     }
+  }, [navigate, searchParams])
 
-    sendMessage({
-      text: content
-    })
+  const outletContext = useMemo(
+    () => ({ refreshConversations }),
+    [refreshConversations]
+  )
 
-    setInput('')
+  const handleSelectConversation = (id: string) => {
+    navigate(getConversationPath(id))
+  }
+
+  const handleNewConversation = () => {
+    navigate('/')
   }
 
   return (
     <div className="flex h-svh flex-col bg-background">
-      <ChatHeader />
+      <SidebarProvider>
+        <AppSidebar
+          conversations={conversations}
+          activeConversationId={activeConversationId}
+          loading={conversationsLoading}
+          onSelectConversation={handleSelectConversation}
+          onNewConversation={handleNewConversation}
+        />
 
-      <main className="min-h-0 flex-1 overflow-y-auto">
-        {isInitializing ? (
-          <div className="flex h-full items-center justify-center text-muted-foreground">
-            正在初始化会话...
-          </div>
-        ) : messages.length === 0 ? (
-          <div className="flex h-full items-center justify-center px-6">
-            <div className="text-center">
-              <h1 className="text-3xl font-semibold tracking-tight">
-                你好，我是 AI Agent
-              </h1>
+        <main className="relative flex flex-1 flex-col overflow-y-auto">
+          <ChatHeader />
 
-              <p className="mt-3 text-muted-foreground">
-                可以聊天，也可以调用工具完成任务。
-              </p>
-            </div>
-          </div>
-        ) : (
-          <MessageList
-            messages={messages}
-            addToolApprovalResponse={
-              addToolApprovalResponse
-            }
-            isThinking={
-              status === 'submitted'
-            }
-          />
-        )}
-      </main>
-
-      {error && (
-        <div className="border-t border-destructive/30 bg-destructive/10 px-4 py-2 text-center text-sm text-destructive">
-          请求失败：{error.message}
-        </div>
-      )}
-
-      <ChatInput
-        value={input}
-        loading={loading || isInitializing}
-        onChange={setInput}
-        onSubmit={handleSubmit}
-      />
+          <Outlet context={outletContext} />
+        </main>
+      </SidebarProvider>
     </div>
   )
 }

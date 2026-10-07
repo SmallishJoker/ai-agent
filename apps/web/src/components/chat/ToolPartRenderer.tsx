@@ -28,7 +28,7 @@ function ToolShell({
   children: ReactNode
 }) {
   return (
-    <div className="my-3 rounded-xl border bg-muted/40 p-4">
+    <div className="my-3 rounded-[26px] border bg-muted/10 p-4">
       <div className="flex items-center gap-2 font-medium">
         {title}
       </div>

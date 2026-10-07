@@ -29,7 +29,7 @@ function MessageBubble({
 
   const runId = message.parts.find(
     part => part.type === 'data-agentRun'
-  )?.data.runId
+  )?.data?.runId
 
   const [showTrace, setShowTrace] =
     useState(false)
@@ -45,14 +45,14 @@ function MessageBubble({
       <div
         className={
           isUser
-            ? 'max-w-[80%] rounded-2xl rounded-br-md bg-primary px-4 py-3 text-primary-foreground'
-            : 'max-w-[80%] px-1 py-3'
+            ? 'max-w-[100%] rounded-[26px] bg-primary px-4 py-2 text-primary-foreground'
+            : 'w-full py-3'
         }
       >
         {!isUser && runId && (
-          <div className="mb-2 flex justify-end">
+          <div className="mb-2 flex justify-start">
             <Button
-              variant="ghost"
+              variant="secondary"
               size="xs"
               onClick={() =>
                 setShowTrace(value => !value)
@@ -65,7 +65,7 @@ function MessageBubble({
         )}
 
         {!isUser && showTrace && runId && (
-          <div className="my-3 rounded-xl border bg-muted/30 p-3">
+          <div className="my-3 rounded-[26px] border p-3">
             <AgentTrace runId={runId} />
           </div>
         )}

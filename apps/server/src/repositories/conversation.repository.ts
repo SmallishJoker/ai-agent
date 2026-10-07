@@ -33,6 +33,22 @@ export async function getAllConversations(
         .orderBy(desc(conversations.updatedAt))
 }
 
+export async function updateConversationTitleIfDefault(
+    conversationId: string,
+    title: string,
+    defaultTitle: string
+) {
+    await db
+        .update(conversations)
+        .set({ title })
+        .where(
+            and(
+                eq(conversations.id, conversationId),
+                eq(conversations.title, defaultTitle)
+            )
+        )
+}
+
 export async function getConversation(
     conversationId: string,
     userId: string

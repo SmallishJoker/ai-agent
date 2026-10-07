@@ -7,6 +7,7 @@ import {
 
 import {
     createNewConversation,
+    DEFAULT_CONVERSATION_TITLE,
     loadAllConversations,
     loadConversation
 } from '../services/conversation.js'
@@ -69,7 +70,8 @@ export const conversationRoutes: FastifyPluginAsync =
 
                 const conversation =
                     await createNewConversation(
-                        parsed.data.title ?? '新对话',
+                        parsed.data.title ??
+                        DEFAULT_CONVERSATION_TITLE,
                         parsed.data.userId
                     )
 

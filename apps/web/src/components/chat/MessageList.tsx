@@ -19,7 +19,7 @@ function MessageList({
   isThinking = false
 }: MessageListProps) {
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-8">
+    <div className="mx-auto flex w-full flex-1 max-w-3xl flex-col gap-6 py-8">
       {messages.map(message => (
         <MessageBubble
           key={message.id}

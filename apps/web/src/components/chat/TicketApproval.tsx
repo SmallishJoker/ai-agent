@@ -24,7 +24,7 @@ function TicketApproval({
 }: Props) {
   if (part.state === 'approval-requested') {
     return (
-      <div className="my-3 rounded-xl border bg-muted/40 p-4">
+      <div className="my-3 rounded-[26px] border bg-muted/40 p-4">
         <div className="font-medium">
           🛠 AI 请求创建工单
         </div>
@@ -63,7 +63,7 @@ function TicketApproval({
 
   if (part.state === 'output-available') {
     return (
-      <div className="my-3 rounded-xl border bg-muted/40 p-4 text-sm">
+      <div className="my-3 rounded-[26px] border bg-muted/40 p-4 text-sm">
         ✅ 工单创建成功（演示：工单号 {part.output.ticketId}
         ，未真正写入业务系统）
       </div>

@@ -1,7 +1,8 @@
 export async function get<T>(
-    url: string
+    url: string,
+    options?: Pick<RequestInit, 'signal'>
 ): Promise<T> {
-    const response = await fetch(url)
+    const response = await fetch(url, options)
 
     if (!response.ok) {
         throw new Error(

@@ -5,7 +5,8 @@ import {
     getConversation,
     getMessages,
     saveMessages,
-    getAllConversations
+    getAllConversations,
+    updateConversationTitleIfDefault
 } from '../repositories/conversation.repository.js'
 
 import {
@@ -53,6 +54,40 @@ export async function loadConversation(
     }
 }
 
+export const DEFAULT_CONVERSATION_TITLE = '新对话'
+
+const MAX_TITLE_LENGTH = 30
+
+export function getFirstUserText(
+    messages: UIMessage[]
+) {
+    const message = messages.find(
+        item => item.role === 'user'
+    )
+
+    if (!message) {
+        return ''
+    }
+
+    return message.parts
+        .filter(part => part.type === 'text')
+        .map(part => part.text)
+        .join('')
+        .trim()
+}
+
+function buildConversationTitle(text: string) {
+    const normalized = text
+        .replace(/\s+/g, ' ')
+        .trim()
+
+    if (normalized.length <= MAX_TITLE_LENGTH) {
+        return normalized
+    }
+
+    return `${normalized.slice(0, MAX_TITLE_LENGTH)}…`
+}
+
 export async function persistMessages(
     conversationId: string,
     messages: UIMessage[]
@@ -61,6 +96,25 @@ export async function persistMessages(
         conversationId,
         messages.map(uiMessageToDatabase)
     )
+
+    const firstUserText = getFirstUserText(messages)
+
+    if (!firstUserText) {
+        return
+    }
+
+    try {
+        await updateConversationTitleIfDefault(
+            conversationId,
+            buildConversationTitle(firstUserText),
+            DEFAULT_CONVERSATION_TITLE
+        )
+    } catch (titleError) {
+        console.error(
+            'Failed to update conversation title',
+            titleError
+        )
+    }
 }
 
 export async function loadAllConversations(

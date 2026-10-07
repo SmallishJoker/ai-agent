@@ -43,6 +43,11 @@ export interface GetConversationResponse {
     messages: ChatUIMessage[]
 }
 
+export interface GetAllConversationsResponse {
+    success: boolean
+    conversations: Conversation[]
+}
+
 export type ChatUITools = {
     getWeather: {
         input: {
