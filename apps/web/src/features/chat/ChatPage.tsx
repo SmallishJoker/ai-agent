@@ -43,6 +43,9 @@ function ChatPage() {
   const [conversationsLoading, setConversationsLoading] =
     useState(true)
 
+  const scrollContainerRef =
+    useRef<HTMLElement | null>(null)
+
   const refreshSeqRef = useRef(0)
 
   const refreshConversations = useCallback(
@@ -88,7 +91,10 @@ function ChatPage() {
   }, [navigate, searchParams])
 
   const outletContext = useMemo(
-    () => ({ refreshConversations }),
+    () => ({
+      refreshConversations,
+      scrollContainerRef
+    }),
     [refreshConversations]
   )
 
@@ -111,7 +117,10 @@ function ChatPage() {
           onNewConversation={handleNewConversation}
         />
 
-        <main className="relative flex flex-1 flex-col overflow-y-auto">
+        <main
+          ref={scrollContainerRef}
+          className="relative flex flex-1 flex-col overflow-y-auto"
+        >
           <ChatHeader />
 
           <Outlet context={outletContext} />

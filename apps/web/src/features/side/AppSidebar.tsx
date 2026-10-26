@@ -11,12 +11,12 @@ import {
     SidebarMenuItem,
     SidebarMenuSkeleton,
     SidebarRail,
+    useSidebar,
 } from "@/components/ui/sidebar"
 
 import {
     Bot,
-    MessageSquare,
-    Plus
+    SquarePen
 } from 'lucide-react'
 
 import type { Conversation } from '@/types/chat'
@@ -36,6 +36,9 @@ export function AppSidebar({
     onSelectConversation,
     onNewConversation
 }: AppSidebarProps) {
+    const { state } = useSidebar()
+    const isCollapsed = state === 'collapsed'
+
     return (
         <Sidebar collapsible='icon'>
             <SidebarHeader>
@@ -59,7 +62,7 @@ export function AppSidebar({
                                     onClick={onNewConversation}
                                     className="cursor-pointer"
                                 >
-                                    <Plus className="cursor-pointer" />
+                                    <SquarePen className="cursor-pointer" />
                                     <span>新对话</span>
                                 </SidebarMenuButton>
                             </SidebarMenuItem>
@@ -68,9 +71,13 @@ export function AppSidebar({
                 </SidebarGroup>
 
                 <SidebarGroup>
-                    {/* <SidebarGroupLabel>
-                        历史会话
-                    </SidebarGroupLabel> */}
+                    {
+                        !isCollapsed && (
+                            <SidebarGroupLabel>
+                                历史会话
+                            </SidebarGroupLabel>
+                        )
+                    }
                     <SidebarGroupContent>
                         <SidebarMenu>
                             {loading ? (
@@ -100,8 +107,23 @@ export function AppSidebar({
                                                 )
                                             }
                                         >
-                                            <MessageSquare />
-                                            <span>{conversation.title}</span>
+                                            {isCollapsed ? (
+                                                <span
+                                                    aria-hidden="true"
+                                                    className="flex size-4 shrink-0 items-center justify-center rounded-sm bg-sidebar-accent text-[10px] font-medium"
+                                                >
+                                                    {Array.from(
+                                                        conversation.title.trim()
+                                                    )[0] ?? '会'}
+                                                </span>
+                                            ) : (
+                                                <>
+                                                    {/* <MessageSquare /> */}
+                                                    <span>
+                                                        {conversation.title}
+                                                    </span>
+                                                </>
+                                            )}
                                         </SidebarMenuButton>
                                     </SidebarMenuItem>
                                 ))

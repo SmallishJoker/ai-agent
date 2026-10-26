@@ -10,19 +10,22 @@ import { Button } from '@/components/ui/button'
 
 import AgentTrace from '../agent/AgentTrace'
 
-import MarkdownRenderer from './MarkdownRenderer'
-
 import ToolPartRenderer from './ToolPartRenderer'
+
+import TypewriterMarkdown from './TypewriterMarkdown'
 
 interface MessageBubbleProps {
   message: ChatUIMessage
 
   addToolApprovalResponse: ChatAddToolApproveResponseFunction
+
+  isStreaming?: boolean
 }
 
 function MessageBubble({
   message,
-  addToolApprovalResponse
+  addToolApprovalResponse,
+  isStreaming = false
 }: MessageBubbleProps) {
   const isUser =
     message.role === 'user'
@@ -83,9 +86,10 @@ function MessageBubble({
                   {part.text}
                 </div>
               ) : (
-                <MarkdownRenderer
+                <TypewriterMarkdown
                   key={index}
                   content={part.text}
+                  active={isStreaming}
                 />
               )
             }

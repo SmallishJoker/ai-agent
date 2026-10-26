@@ -178,6 +178,28 @@ h1 span {
   font-size: 14px;
 }
 
+.typewriter-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background-color: currentColor;
+  animation: typewriter-blink 1s step-end infinite;
+}
+
+@keyframes typewriter-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .typewriter-cursor {
+    animation: none;
+  }
+}
+
 .chat-input {
   display: flex;
   gap: 12px;

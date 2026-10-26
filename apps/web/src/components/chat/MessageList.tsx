@@ -11,12 +11,15 @@ interface MessageListProps {
   addToolApprovalResponse: ChatAddToolApproveResponseFunction
 
   isThinking?: boolean
+
+  streamingMessageId?: string | null
 }
 
 function MessageList({
   messages,
   addToolApprovalResponse,
-  isThinking = false
+  isThinking = false,
+  streamingMessageId = null
 }: MessageListProps) {
   return (
     <div className="mx-auto flex w-full flex-1 max-w-3xl flex-col gap-6 py-8">
@@ -26,6 +29,9 @@ function MessageList({
           message={message}
           addToolApprovalResponse={
             addToolApprovalResponse
+          }
+          isStreaming={
+            message.id === streamingMessageId
           }
         />
       ))}
