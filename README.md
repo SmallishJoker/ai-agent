@@ -1,6 +1,6 @@
 # AI Agent Platform 开发与教学文档
 
-一个基于 **pnpm workspace** 的全栈 AI Agent 演示项目：前端提供流式对话界面，后端用 Vercel AI SDK 编排大模型、工具调用（Tool Calling）、人工审批（Human-in-the-loop）以及长期记忆（会话摘要 + 基于 Embedding 与 pgvector 的语义记忆）。
+一个基于 **pnpm workspace** 的全栈 AI Agent 演示项目：前端基于 **shadcn/ui AI Elements** 提供流式对话界面（打字机输出、自动滚动、Chain of Thought、工具轨迹），后端用 Vercel AI SDK 编排大模型、工具调用（Tool Calling）、人工审批（Human-in-the-loop）以及长期记忆（会话摘要 + 基于 Embedding 与 pgvector 的语义记忆）。天气工具已接入**和风天气（QWeather）**真实 API。
 
 本文档同时面向两类读者：
 
@@ -35,13 +35,16 @@
 
 | 能力 | 说明 |
 | --- | --- |
-| 流式对话 | 基于 AI SDK 的 UI Message Stream，逐字返回 |
-| 工具调用 | 天气、时间、计算器、用户信息、创建工单 |
+| 流式对话 | 基于 AI SDK 的 UI Message Stream，前端逐字打字机渲染 |
+| 自动滚动 | 流式输出时自动吸底；用户上滑后暂停，点击「回到底部」恢复 |
+| Chat UI | 基于 shadcn/ui AI Elements：`MessageScroller` + `Message` + `Bubble` |
+| Chain of Thought | 用 `Trace` 展示工具调用步骤、运行状态与结果，运行中自动展开 |
+| 工具调用 | 天气（和风天气真实 API）、时间、计算器、用户信息、创建工单 |
 | 人工审批 | 创建工单前必须由用户点击「确认 / 拒绝」 |
 | 多轮会话持久化 | 会话与消息存入 PostgreSQL |
 | 会话摘要 | 对话超长后自动滚动生成摘要，注入 System Prompt |
 | 语义记忆 | 用户长期记忆向量化存入 pgvector，按语义相似度召回（Embedding + 余弦检索） |
-| 会话恢复 | 会话 ID 写入 URL `?c=<id>`，刷新可恢复历史 |
+| 会话恢复 | 会话 ID 写入 URL `/c/<id>`，刷新可恢复历史 |
 
 ---
 
@@ -57,7 +60,12 @@
 
 - React `19` + Vite `8`
 - Tailwind CSS `4`（`@tailwindcss/vite`）+ shadcn（`base-vega` 风格，基于 `@base-ui/react`）
+- shadcn/ui **AI Elements**（Base UI 版）：
+  - Chat：`message-scroller` + `message` + `bubble`
+  - Chain of Thought：`trace`（同时安装了 `code-block` / `badge` 以便扩展）
+  - 依赖 `@shadcn/react`（Message Scroller 原语）与 `shiki`（代码高亮）
 - `@ai-sdk/react` 的 `useChat` 管理对话状态与流式渲染
+- 自研 `useTypewriter` 打字机 Hook（`requestAnimationFrame` 逐字显示 + 自动追赶）
 - `react-markdown` + `remark-gfm` 渲染 Markdown
 - `lucide-react` 图标
 
@@ -68,6 +76,7 @@
 - Drizzle ORM `0.45` + `pg`（PostgreSQL）
 - PostgreSQL + **pgvector**（向量存储与余弦相似度检索）
 - Embedding：任意 OpenAI 兼容服务（示例：阿里云 DashScope `text-embedding-v4`）
+- 和风天气（QWeather）API：GeoAPI 城市搜索 + 实时天气 v1
 - Zod `4`（请求校验 + 工具入参 Schema）
 - `tsx watch` 开发热重载
 - Vitest 单元测试（纯逻辑，见 [第 15 节](#15-测试)）
@@ -99,19 +108,31 @@ ai-agent-platform/
 │   │   └── src/
 │   │       ├── App.tsx
 │   │       ├── main.tsx
-│   │       ├── features/chat/ChatPage.tsx      # 对话页主容器
+│   │       ├── features/chat/
+│   │       │   ├── ChatPage.tsx                # 侧边栏 + Outlet 主容器
+│   │       │   ├── ConversationPage.tsx        # 会话页：useChat / 发送 / 审批续发
+│   │       │   ├── NewChatPage.tsx             # 新建会话落地页
+│   │       │   ├── context.ts                  # Outlet 上下文
+│   │       │   └── pending-message.ts          # 首条消息跨路由交接
 │   │       ├── components/chat/                # 对话 UI 组件
 │   │       │   ├── ChatHeader.tsx
 │   │       │   ├── ChatInput.tsx
-│   │       │   ├── MessageList.tsx
-│   │       │   ├── MessageBubble.tsx
+│   │       │   ├── MessageList.tsx             # MessageScroller + 自动吸底
+│   │       │   ├── MessageBubble.tsx           # Message / Bubble + parts 分发
+│   │       │   ├── ChainOfThought.tsx          # Trace 工具步骤总结
+│   │       │   ├── TypewriterMarkdown.tsx      # 打字机 Markdown
 │   │       │   ├── MarkdownRenderer.tsx
 │   │       │   ├── ToolPartRenderer.tsx        # 工具调用渲染分发
 │   │       │   ├── TicketApproval.tsx          # 工单审批 UI
 │   │       │   └── TypingIndicator.tsx
-│   │       ├── components/ui/                  # shadcn 基础组件
+│   │       ├── components/ui/                  # shadcn 基础组件 + AI Elements
+│   │       │   ├── message-scroller.tsx
+│   │       │   ├── message.tsx
+│   │       │   ├── bubble.tsx
+│   │       │   └── trace.tsx
+│   │       ├── hooks/use-typewriter.ts         # 逐字输出
 │   │       ├── lib/user.ts                     # 本地用户 ID
-│   │       ├── services/                       # API 封装（api/conversation）
+│   │       ├── services/                       # API 封装（api/conversation/agent-trace）
 │   │       └── types/chat.ts                   # 前端消息 & 工具类型
 │   └── server/                  # 后端
 │       ├── drizzle.config.ts
@@ -157,9 +178,10 @@ ai-agent-platform/
 │           ├── db/              # Drizzle 连接 & Schema
 │           │   ├── index.ts
 │           │   └── schema.ts
-│           └── config/          # 模型 & 记忆配置
+│           └── config/          # 模型、记忆 & 第三方服务配置
 │               ├── ai.ts        # chat + embedding 客户端
-│               └── memory.ts
+│               ├── memory.ts
+│               └── qweather.ts  # 和风天气 API Host / Key
 └── packages/shared/src/         # 共享类型
 ```
 
@@ -270,6 +292,15 @@ pnpm test         # server 单元测试（vitest）
 | `OPENAI_BASE_URL` | 是 | 模型服务地址，如 `https://api.deepseek.com` |
 | `OPENAI_MODEL` | 是 | 模型名，如 `deepseek-flash` |
 
+**和风天气（天气工具）**
+
+| 变量 | 必填 | 说明 |
+| --- | --- | --- |
+| `QWEATHER_API_HOST` | 是 | 控制台「设置」中的 API Host，如 `abcxyz.qweatherapi.com`（可省略 `https://`） |
+| `QWEATHER_API_KEY` | 是 | 和风天气 API Key；也可以改用 JWT，但当前实现使用 API Key |
+
+> 和风天气的公共 API 域名（`devapi.qweather.com` / `geoapi.qweather.com`）正在逐步停用，请使用控制台分配的专属 API Host。未配置这两项时，天气工具会返回明确的配置提示，不会影响其他对话能力。
+
 **Embedding（语义记忆用，可留空）**
 
 | 变量 | 必填 | 说明 |
@@ -293,7 +324,7 @@ pnpm test         # server 单元测试（vitest）
 
 > ⚠️ **安全提示**：`.env` 含真实密钥，已被根 `.gitignore` 忽略，切勿提交；仅提交 `.env.example`。本文档不复制任何密钥内容。
 
-模型与 Embedding 客户端都在 `apps/server/src/config/ai.ts` 创建，基于 OpenAI 兼容协议，可无缝切换 DeepSeek / 通义 / Ollama 等。**注意 Chat 与 Embedding 是两套独立配置**——若 Chat 用 DeepSeek（不提供 embedding），必须单独配置 `EMBEDDING_*`。
+模型与 Embedding 客户端都在 `apps/server/src/config/ai.ts` 创建，基于 OpenAI 兼容协议，可无缝切换 DeepSeek / 通义 / Ollama 等。**注意 Chat 与 Embedding 是两套独立配置**——若 Chat 用 DeepSeek（不提供 embedding），必须单独配置 `EMBEDDING_*`。和风天气配置由 `apps/server/src/config/qweather.ts` 读取。
 
 **DashScope `text-embedding-v4` 示例**：
 
@@ -311,11 +342,12 @@ EMBEDDING_DIMENSIONS=1536   # v4 默认 1024，这里显式指定 1536 以匹配
 ```
 ┌─────────────────────────── 浏览器 ───────────────────────────┐
 │  React 19 + useChat                                           │
-│  ChatPage ──► MessageList ──► MessageBubble ──► ToolPartRenderer │
+│  ChatPage ─► ConversationPage ─► MessageList (MessageScroller) │
 │      │              ▲                                         │
 │      │ sendMessage  │ 流式 parts                              │
 │      ▼              │                                         │
-│  DefaultChatTransport  ── POST /api/chat (SSE 流)             │
+│  DefaultChatTransport ── POST /api/chat (SSE 流)              │
+│  MessageBubble ─► ChainOfThought / Typewriter / ToolPart       │
 └──────────────────────────────┬────────────────────────────────┘
                                │ Vite proxy /api
 ┌──────────────────────────────▼────────────────────────────────┐
@@ -346,12 +378,20 @@ EMBEDDING_DIMENSIONS=1536   # v4 默认 1024，这里显式指定 1536 以匹配
 ### 7.1 首次进入页面
 
 ```
-ChatPage useEffect
-  ├─ URL 有 ?c=<id> ──► GET /api/conversations/:id/messages ──► setMessages(历史)
-  └─ 无 ─────────────► POST /api/conversations ──► 写入 ?c=<id> (history.replaceState)
+新会话（NewChatPage）
+  ├─ POST /api/conversations                         # 创建会话
+  ├─ setPendingInitialMessage(conversationId, text)  # 交接首条消息
+  └─ navigate(`/c/${conversationId}`)
+
+已有会话（ConversationPage 挂载）
+  ├─ takePendingInitialMessage(id)?  sendMessage(text)
+  └─ 否则 GET /api/conversations/:id/messages ──► setMessages(历史)
+
+会话切换
+  └─ 先 stop() 中断上一条流，再加载新会话消息
 ```
 
-见 `apps/web/src/features/chat/ChatPage.tsx:77`。
+URL 路由为 `/c/:conversationId`；兼容旧链接 `?c=<id>`，`ChatPage` 会自动重定向。见 `apps/web/src/features/chat/ChatPage.tsx` 与 `ConversationPage.tsx`。
 
 ### 7.2 发送一条消息（含工具调用与审批）
 
@@ -394,8 +434,9 @@ POST /api/chat
 关键点：
 
 - 工具侧：`apps/server/src/tools/createTicket.ts:26` 的 `needsApproval: true`。
-- 前端侧：`apps/web/src/features/chat/ChatPage.tsx:73` 的 `sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses`。
+- 前端侧：`apps/web/src/features/chat/ConversationPage.tsx` 的 `sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses`。
 - 审批 UI：`apps/web/src/components/chat/TicketApproval.tsx`。
+- 审批状态同时会出现在 `ChainOfThought` 的步骤列表中（等待确认 / 已完成 / 已拒绝）。
 
 ---
 
@@ -467,13 +508,28 @@ streamText({
 | --- | --- | --- | --- |
 | `getCurrentTime` | `timezone` | `{ timezone, currentTime }` | 用 `Intl.DateTimeFormat` |
 | `calculator` | `a, b, operation` | `{ result }` / `{ error }` | 除零保护 |
-| `getWeather` | `city` | 天气对象 / 失败信息 | 内置北京/上海/广州模拟数据 |
+| `getWeather` | `city` | 实时天气对象 / 失败信息 | **和风天气 API**：GeoAPI 城市搜索 + 实时天气 v1 |
 | `getUserInfo` | 无 | `{ success, user }` | 返回固定用户 |
 | `createTicket` | `title, description, priority` | 工单对象 | **`needsApproval: true`**，模拟 1s 延迟 |
 
-新增工具只需：在 `tools/` 新建文件 → 在 `tools/index.ts` 注册进 `tools` 对象 → 在 `apps/web/src/types/chat.ts` 补类型 → 在 `ToolPartRenderer.tsx` 补渲染分支。
+新增工具只需：在 `tools/` 新建文件 → 在 `tools/index.ts` 注册进 `tools` 对象 → 在 `apps/web/src/types/chat.ts` 补类型。普通工具会自动出现在 `ChainOfThought` 的步骤中；只有需要审批或自定义交互（如 `createTicket`）时，才需要在 `ToolPartRenderer.tsx` 增加分支。
 
 `tools/index.ts` 用 `withSafeExecution()` 统一包裹每个工具的 `execute`：内部经 `agent/tool-executor.ts` 的 `executeToolSafely()` 执行——成功返回原始结果（形状不变），失败则抛出错误交给 AI SDK 生成 `output-error`，便于集中处理与记录。
+
+**天气工具的请求链路**
+
+```
+getWeather({ city })
+  ├─ GET {QWEATHER_API_HOST}/geo/v2/city/lookup
+  │     ?location=<城市名或"经度,纬度">&number=5&lang=zh
+  │     Header: X-QW-Api-Key
+  ├─ 取精确匹配（否则取第一条）城市 → 经纬度
+  └─ GET {QWEATHER_API_HOST}/weather/v1/current/{lat}/{lon}
+        ?localTime=true&lang=zh
+        Header: X-QW-Api-Key
+```
+
+返回字段包括：`temperature`、`weather`、`feelsLike`、`humidity`、`windDirection`、`windScale`、`windSpeed`、`precipitation`、`pressure`、`visibilityKm`、`cloudCover`、`uvIndex` 等。请求带 10 秒超时；城市不存在、未配置、HTTP / 网络错误都会转成 `{ success: false, message }`，避免打断对话。
 
 ### 8.4 服务与仓储分层
 
@@ -502,7 +558,7 @@ streamText({
 ```
 runAgent()
   ├─ createRunId() + createAgentTrace()        # 整次运行的轨迹对象
-  ├─ onStepEnd        → emit('model')           # 每个模型步
+  ├─ onStepStart      → emit('model')           # 每个模型步开始
   ├─ onToolExecutionEnd → emit('tool', name, error?)  # 每个工具调用（含耗时）
   └─ onFinish         → emit('finish', finishReason) + finishAgentTrace() + onTrace()
 ```
@@ -529,7 +585,7 @@ execute({ writer })
 - 运行失败或中断时由 `onError` / `onAbort` 收尾，`status` 记为 `failed` 并保存 `error`。
 - 结束时 `logAgentTrace()` 通过 Fastify 的 pino 日志输出结构化 `agent_trace` 记录。
 
-**前端调试**：助手消息右上角的「🐞 调试」按钮可展开该次运行的完整轨迹面板（`components/agent/AgentTrace.tsx`），展示 status / finishReason / duration / steps / tokens / error 以及每个 step 的类型、名称、耗时与错误。
+**前端调试**：助手消息上方的「🐞 调试」按钮可展开该次运行的完整轨迹面板（`components/agent/AgentTrace.tsx`），展示 status / finishReason / duration / steps / tokens / error 以及每个 step 的类型、名称、耗时与错误。
 
 ---
 
@@ -646,41 +702,69 @@ buildMemoryContext(conversationId, userId, currentUserMessage)
 
 ## 10. 前端详解
 
-### 10.1 状态与传输（`ChatPage.tsx`）
+### 10.1 路由、状态与传输（`ChatPage.tsx` / `ConversationPage.tsx`）
 
-- `conversationIdRef`：会话 ID 用 `ref` 保存，避免闭包过期，同时被 `transport` 读取。
-- `transport`：自定义 `prepareSendMessagesRequest`，把 `conversationId` 合并进请求体（因为 AI SDK 默认不发送它）。
-- `useChat<ChatUIMessage>`：返回 `messages / sendMessage / status / error / addToolApprovalResponse`。
-- `initializedRef`：防止 React StrictMode 下 effect 重复初始化会话。
+- `ChatPage`：负责用户 ID、会话列表、侧边栏与 `<Outlet />`；`main` 使用 `overflow-hidden`，滚动交给消息区自己的 `MessageScroller`。
+- `ConversationPage`：创建 `DefaultChatTransport`，用 `prepareSendMessagesRequest` 把 `conversationId / userId / trigger / messageId` 合并进请求体。
+- `useChat<ChatUIMessage>`：返回 `messages / sendMessage / status / error / stop / addToolApprovalResponse`，并在 `onFinish` 刷新侧边栏会话列表。
+- `loadRequestIdRef` + `AbortController`：防止会话切换时旧请求把消息写进新会话；切换前先 `stop()` 中断上一条流。
+- `sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses`：审批完成后自动续发请求。
 
 ### 10.2 渲染链路
 
 ```
-MessageList          遍历消息，渲染气泡 + 「思考中」指示
- └ MessageBubble     按 role 决定左右布局；遍历 message.parts
-    ├ text           user 用纯文本，assistant 用 MarkdownRenderer
-    └ 其它 part      ToolPartRenderer 按 part.type 分发
+MessageList
+ └ MessageScrollerProvider(autoScroll)
+    └ MessageScroller → Viewport → Content
+       └ MessageScrollerItem（用户消息带 scrollAnchor）
+          └ MessageBubble
+             ├ Message / MessageContent        # shadcn AI Message
+             ├ ChainOfThought                  # 工具步骤 Trace（助手）
+             ├ TypewriterMarkdown              # 助手文本 + 打字机
+             ├ Bubble / BubbleContent          # 用户气泡
+             └ ToolPartRenderer                # 工单审批等交互
 ```
 
-`MessageBubble.tsx:37` 的核心逻辑：`part.type === 'text'` 走文本，否则交给工具渲染器。
+`MessageBubble` 只对 `tool-createTicket` 保留内联审批 UI；天气、时间、计算等工具统一收敛到 `ChainOfThought`，避免重复展示。
 
-### 10.3 工具渲染（`ToolPartRenderer.tsx`）
+### 10.3 自动滚动与打字机
 
-按 `part.type`（如 `tool-getWeather`）分发到不同的 `ToolShell`；状态机包括：
+**自动滚动**由 shadcn 的 `MessageScroller` 负责：
 
-- `input-streaming`：正在生成参数
-- `output-available`：渲染结果
-- `output-error`：渲染错误
-- `approval-requested` / `output-denied`：交给 `TicketApproval`
+- 流式内容增长时自动吸底（内部通过 `ResizeObserver` 监听内容高度）。
+- 用户向上滚动、触摸拖动或键盘滚动离开底部后，自动进入自由滚动，不再强制拉回。
+- 离开底部时显示 `MessageScrollerButton`（「回到底部」）；点击后平滑滚到底部并恢复跟随。
+- 发送新消息时会主动滚到底部并恢复跟随；助手回复继续流式展开，不会因为滚动锚点停在上方而中断吸底。
+- 消息项不启用 `content-visibility`，避免快速上滑时出现内容未渲染的空白区域。
 
-### 10.4 类型系统（`types/chat.ts`）
+**打字机**由 `hooks/use-typewriter.ts` 实现：
 
-`ChatUITools` 用 AI SDK 的泛型把每个工具的名称、入参、出参类型化，`ChatUIMessage = UIMessage<never, UIDataTypes, ChatUITools>`，从而在 `ToolPartRenderer` 中获得类型安全的 `part.output`。**前后端工具类型目前是手动同步的，改工具时务必两边一起改。**
+- 使用 `requestAnimationFrame` 逐字显示，默认约 42 字/秒；积压越多自动加速追赶（最高 600 字/秒）。
+- 只对当前流式助手消息启用；历史消息直接完整展示。
+- 流结束后继续把剩余字符打完，并显示闪烁光标。
+- 尊重 `prefers-reduced-motion`，开启减少动画时直接显示全文。
 
-### 10.5 API 封装（`services/` 与 `lib/`）
+### 10.4 Chain of Thought 与工具渲染
+
+`ChainOfThought.tsx` 基于 shadcn `Trace` 组合：
+
+- 从助手消息的 `tool-*` parts 生成步骤列表。
+- 步骤状态映射：`input-* / approval-* → running`，`output-available → 完成`，`output-error / output-denied → error`。
+- 运行中自动展开，完成后自动收起（用户手动操作后保持用户选择）。
+- 标题示例：「正在执行 2 个步骤」「已完成 3 个步骤」「执行了 3 个步骤，1 个失败」。
+- 展示结果摘要：天气、时间、计算结果、用户信息、工单号等。
+
+工单审批仍由 `ToolPartRenderer` + `TicketApproval` 渲染，因为需要「确认 / 拒绝」按钮；其余工具由 Chain of Thought 统一呈现。
+
+### 10.5 类型系统（`types/chat.ts`）
+
+`ChatUITools` 用 AI SDK 的泛型把每个工具的名称、入参、出参类型化，`ChatUIMessage = UIMessage<never, UIDataTypes, ChatUITools>`，从而在 `ToolPartRenderer` / `ChainOfThought` 中获得类型安全的 `part.output`。天气工具的出参已同步为和风天气的真实字段（体感温度、湿度、风力、降水、气压、能见度等）。**前后端工具类型目前是手动同步的，改工具时务必两边一起改。**
+
+### 10.6 API 封装（`services/` 与 `lib/`）
 
 - `services/api.ts`：极简 `get/post` 泛型封装。
-- `services/conversation.ts`：`createConversation(userId)` / `getConversation(id, userId)`。
+- `services/conversation.ts`：`createConversation(userId)` / `getConversation(id, userId)` / `getAllConversations(userId)`。
+- `services/agent-trace.ts`：按 `runId` 拉取 Agent 运行轨迹（调试面板使用）。
 - `lib/user.ts`：`getUserId()` 在 localStorage 生成并持久化用户 ID。
 - `types/chat.ts`：复用 `@ai-agent/shared` 的 `Conversation` 类型，避免重复定义。
 
@@ -798,8 +882,8 @@ pnpm --filter @ai-agent/server db:push       # 开发期直接同步（不生成
 1. 新建 `apps/server/src/tools/getExchangeRate.ts`，用 `tool({ description, inputSchema, execute })` 定义。
 2. 在 `apps/server/src/tools/index.ts` 引入并加入 `tools` 对象。
 3. 在 `apps/web/src/types/chat.ts` 的 `ChatUITools` 增加对应 `input/output`。
-4. 在 `apps/web/src/components/chat/ToolPartRenderer.tsx` 增加 `part.type === 'tool-getExchangeRate'` 分支。
-5. （可选）若涉及真实业务副作用，加 `needsApproval: true` 并复用审批 UI 模式。
+4. 普通工具无需改渲染：`ChainOfThought` 会自动把它显示为一步；如需自定义摘要，可在 `ChainOfThought.tsx` 的 `TOOL_LABELS` / `TOOL_ICONS` / `describeStep()` 中补充。
+5. 若需要审批或特殊交互，在 `ToolPartRenderer.tsx` 增加 `part.type === 'tool-getExchangeRate'` 分支，并可加 `needsApproval: true`。
 
 ### 12.2 新增一个 API
 
@@ -833,7 +917,7 @@ Embedding 与 Chat 独立配置，只要服务兼容 OpenAI 的 `/embeddings`：
 ## 13. 常见问题与注意事项
 
 **Q：刷新页面会新建会话吗？**
-不会。会话 ID 存在 URL `?c=<id>`，刷新时先尝试加载历史；加载失败才新建。
+不会。会话 ID 存在 URL `/c/<id>`，刷新时先尝试加载历史；加载失败才回到新建页。旧链接 `?c=<id>` 会自动重定向。
 
 **Q：为什么创建工单不会立即执行？**
 `createTicket` 设置了 `needsApproval: true`，必须等前端 `addToolApprovalResponse` 后才会执行，这是 Human-in-the-loop 的示例。
@@ -843,6 +927,9 @@ Embedding 与 Chat 独立配置，只要服务兼容 OpenAI 的 `/embeddings`：
 
 **Q：工具调用会无限循环吗？**
 不会。`stopWhen: stepCountIs(5)` 限制最多 5 步。
+
+**Q：天气查询失败 / 提示未配置？**
+检查 `apps/server/.env` 中的 `QWEATHER_API_HOST` 与 `QWEATHER_API_KEY`。API Host 必须是控制台「设置」里分配的专属域名（公共域名正在停用），可省略 `https://`。工具不会抛异常打断对话，失败会以 `{ success: false, message }` 返回给模型。
 
 **Q：没有配置 Embedding 会怎样？**
 不影响使用。`generateEmbedding` 返回 `null`，语义检索降级为按 `importance` 取用户记忆（见 [9.7](#97-语义记忆embedding--pgvector)）。
@@ -854,9 +941,9 @@ Embedding 与 Chat 独立配置，只要服务兼容 OpenAI 的 `/embeddings`：
 
 - `apps/server/.env` 含真实密钥，已被根 `.gitignore` 忽略，切勿提交；仅提交 `.env.example`。
 - 用户身份是**轻量本地 ID**（localStorage + 请求参数），不是鉴权：任何人都能伪造 `userId`。生产环境需替换为服务端签发的会话 / JWT。
-- 前端暂无会话列表 / 历史侧边栏 UI，`GET /api/getAllConversations` 已就绪但未被界面使用。
-- 前后端工具类型需手动保持一致（见 10.4），可考虑把工具 Schema 收敛到 `packages/shared` 统一维护。
-- `createTicket` 与 `getWeather`、`getUserInfo` 均为演示实现：工单只返回模拟号（返回体带 `demo: true`），天气为内置数据，用户信息写死。
+- 会话列表 / 历史侧边栏已接入 `GET /api/getAllConversations`。
+- 前后端工具类型需手动保持一致（见 10.5），可考虑把工具 Schema 收敛到 `packages/shared` 统一维护。
+- `createTicket` 与 `getUserInfo` 仍为演示实现：工单只返回模拟号（返回体带 `demo: true`），用户信息写死；`getWeather` 已使用和风天气真实 API，需要配置 `QWEATHER_*`。
 - 用户长期记忆按「最近 4 条消息」逐轮抽取；**去重仍是内容精确匹配**（`findUserMemoryByContent`），未做语义去重。
 - 历史记忆（引入 embedding 之前写入的行）`embedding` 为 NULL，不会被语义检索命中；需要时写回填脚本重新生成向量。
 - 向量维度固定为 1536（`vector(1536)`），更换非 1536 维的 embedding 模型需改列并重建索引。
@@ -895,12 +982,15 @@ pnpm --filter @ai-agent/server test:watch  # 监听模式
 | 文件 | 覆盖对象 | 关键用例 |
 | --- | --- | --- |
 | `src/tools/calculator.test.ts` | `calculate()` 纯函数 | 加/减/乘/除、除零返回 `{ error }` |
+| `src/tools/getWeather.test.ts` | `queryWeather()` | mock `fetch`：城市搜索 + 天气字段映射、城市不存在、未配置 |
 | `src/services/message-mapper.test.ts` | 数据库行 ↔ UI 消息互转 | 有 `parts` 用 `parts`、无则回退 `content`、无文本 `content=null` |
 | `src/services/memory.test.ts` | `computeSummaryBoundary()` | 未攒够返回 `null`、攒够返回边界值、扣除已摘要数 |
 | `src/agent/memory-extractor.test.ts` | `memoryExtractionSchema` | 合法/空结果通过；非法 `type`、越界 `importance` 拒绝 |
+| `src/agent/runtime.test.ts` | `maxToolCallsIs()` | 未达上限继续、达到上限停止、跨步骤累计工具调用 |
+| `src/agent/trace.test.ts` | Agent Trace | 创建运行轨迹、累计步骤、完成原因、错误、token 统计 |
 | `src/app.test.ts` | `buildApp()` 路由 | 用 `app.inject()` 打 `/api/health`；缺 `userId` 的 `/api/chat` 返回 400 |
 
-前四个针对**纯函数**，无需 mock 数据库或模型；`app.test.ts` 借助 `buildApp()` 与 Fastify 的 `inject()`，在不起端口、不连数据库的情况下测路由与校验，运行快（约 0.8s）。
+大部分测试针对**纯函数**，无需数据库或模型；`getWeather.test.ts` 通过 `vi.stubGlobal('fetch', ...)` 模拟和风天气响应，不产生真实网络请求；`app.test.ts` 借助 `buildApp()` 与 Fastify 的 `inject()`，在不起端口、不连数据库的情况下测路由与校验。当前共 8 个测试文件、30 个用例。
 
 ### 15.3 为什么这样设计
 
@@ -949,6 +1039,7 @@ pnpm test         # server vitest
 | Agent 执行 | `apps/server/src/agent/runtime.ts` |
 | System Prompt | `apps/server/src/agent/prompts.ts` |
 | 工具注册 | `apps/server/src/tools/index.ts` |
+| 天气工具（和风天气） | `apps/server/src/tools/getWeather.ts`、`apps/server/src/config/qweather.ts` |
 | 审批工具示例 | `apps/server/src/tools/createTicket.ts` |
 | 会话摘要逻辑 | `apps/server/src/services/memory.ts` |
 | 用户长期记忆 | `apps/server/src/services/user-memory.ts` |
@@ -967,6 +1058,11 @@ pnpm test         # server vitest
 | 表结构 | `apps/server/src/db/schema.ts` |
 | 数据库环境 | `docker-compose.yml`、`docker/postgres/` |
 | 前端对话主容器 | `apps/web/src/features/chat/ChatPage.tsx` |
+| 会话页 / useChat | `apps/web/src/features/chat/ConversationPage.tsx` |
+| 消息滚动（AI Chat） | `apps/web/src/components/chat/MessageList.tsx`、`apps/web/src/components/ui/message-scroller.tsx` |
+| 消息气泡 | `apps/web/src/components/chat/MessageBubble.tsx`、`apps/web/src/components/ui/message.tsx`、`apps/web/src/components/ui/bubble.tsx` |
+| Chain of Thought | `apps/web/src/components/chat/ChainOfThought.tsx`、`apps/web/src/components/ui/trace.tsx` |
+| 打字机效果 | `apps/web/src/hooks/use-typewriter.ts`、`apps/web/src/components/chat/TypewriterMarkdown.tsx` |
 | 前端用户 ID | `apps/web/src/lib/user.ts` |
 | 工具 UI 分发 | `apps/web/src/components/chat/ToolPartRenderer.tsx` |
 | 前端工具类型 | `apps/web/src/types/chat.ts` |

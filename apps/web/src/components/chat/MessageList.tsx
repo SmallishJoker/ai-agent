@@ -1,3 +1,5 @@
+import { useEffect } from 'react'
+
 import type { ChatAddToolApproveResponseFunction } from 'ai'
 
 import { ArrowDown } from 'lucide-react'
@@ -8,13 +10,39 @@ import {
   MessageScrollerContent,
   MessageScrollerItem,
   MessageScrollerProvider,
-  MessageScrollerViewport
+  MessageScrollerViewport,
+  useMessageScroller
 } from '@/components/ui/message-scroller'
 
 import type { ChatUIMessage } from '@/types/chat'
 
 import MessageBubble from './MessageBubble'
 import TypingIndicator from './TypingIndicator'
+
+function ScrollToEndOnNewUserMessage({
+  messages
+}: {
+  messages: ChatUIMessage[]
+}) {
+  const { scrollToEnd } = useMessageScroller()
+
+  const lastMessage = messages[messages.length - 1]
+
+  const lastUserId =
+    lastMessage?.role === 'user'
+      ? lastMessage.id
+      : null
+
+  useEffect(() => {
+    if (!lastUserId) {
+      return
+    }
+
+    scrollToEnd({ behavior: 'auto' })
+  }, [lastUserId, scrollToEnd])
+
+  return null
+}
 
 interface MessageListProps {
   messages: ChatUIMessage[]
@@ -38,13 +66,14 @@ function MessageList({
       defaultScrollPosition="end"
     >
       <MessageScroller className="min-h-0 flex-1">
+        <ScrollToEndOnNewUserMessage messages={messages} />
+
         <MessageScrollerViewport>
           <MessageScrollerContent className="mx-auto w-full max-w-3xl px-4 py-6">
             {messages.map(message => (
               <MessageScrollerItem
                 key={message.id}
                 messageId={message.id}
-                scrollAnchor={message.role === 'user'}
               >
                 <MessageBubble
                   message={message}
