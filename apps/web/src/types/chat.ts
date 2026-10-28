@@ -58,8 +58,26 @@ export type ChatUITools = {
         | {
             success: true
             city: string
+            province?: string
+            locationId?: string
+            latitude?: number
+            longitude?: number
             temperature: number
             weather: string
+            feelsLike?: number
+            humidity?: number
+            windDirection?: string
+            windScale?: number
+            windSpeed?: number
+            precipitation?: number
+            precipitationType?: string
+            pressure?: number
+            visibilityKm?: number
+            dewPoint?: number
+            cloudCover?: number
+            uvIndex?: number
+            fetchedAt?: string
+            source?: string
         }
         | {
             success: false
