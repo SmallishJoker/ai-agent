@@ -17,15 +17,10 @@ import {
 
 import { useChat } from '@ai-sdk/react'
 
-import { ArrowDown } from 'lucide-react'
-
 import ChatInput from '@/components/chat/ChatInput'
 import ChatWelcome from '@/components/chat/ChatWelcome'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import MessageList from '@/components/chat/MessageList'
-import { Button } from '@/components/ui/button'
-
-import { useAutoScroll } from '@/hooks/use-auto-scroll'
 
 import { useChatOutletContext } from './context'
 import { takePendingInitialMessage } from './pending-message'
@@ -45,11 +40,8 @@ function ConversationPage() {
   const navigate = useNavigate()
   const userId = useMemo(() => getUserId(), [])
 
-  const { refreshConversations, scrollContainerRef } =
+  const { refreshConversations } =
     useChatOutletContext()
-
-  const { isFollowing, resumeAutoScroll } =
-    useAutoScroll(scrollContainerRef)
 
   const loadRequestIdRef = useRef(0)
 
@@ -111,8 +103,6 @@ function ConversationPage() {
     // can't append messages into the conversation we're switching to.
     stop()
 
-    resumeAutoScroll()
-
     async function load() {
       const initialMessage =
         takePendingInitialMessage(conversationId)
@@ -164,7 +154,6 @@ function ConversationPage() {
   }, [
     conversationId,
     navigate,
-    resumeAutoScroll,
     sendMessage,
     setMessages,
     stop,
@@ -197,20 +186,20 @@ function ConversationPage() {
 
     sendMessage({ text: content })
 
-    resumeAutoScroll()
-
     setInput('')
   }
 
   return (
-    <>
+    <div className="flex min-h-0 flex-1 flex-col">
       <ErrorBoundary key={conversationId}>
         {isInitializing ? (
-          <div className="flex h-full items-center justify-center text-muted-foreground">
+          <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
             正在初始化会话...
           </div>
         ) : messages.length === 0 ? (
-          <ChatWelcome />
+          <div className="flex min-h-0 flex-1 items-center justify-center">
+            <ChatWelcome />
+          </div>
         ) : (
           <MessageList
             messages={messages}
@@ -222,20 +211,6 @@ function ConversationPage() {
           />
         )}
       </ErrorBoundary>
-
-      {!isFollowing && (
-        <div className="pointer-events-none sticky bottom-30 z-20 flex h-0 justify-center">
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            onClick={resumeAutoScroll}
-            className="pointer-events-auto rounded-full bg-background/90 shadow-md backdrop-blur"
-          >
-            <ArrowDown />
-          </Button>
-        </div>
-      )}
 
       {error && (
         <div className="border-t border-destructive/30 bg-destructive/10 px-4 py-2 text-center text-sm text-destructive">
@@ -249,7 +224,7 @@ function ConversationPage() {
         onChange={setInput}
         onSubmit={handleSubmit}
       />
-    </>
+    </div>
   )
 }
 

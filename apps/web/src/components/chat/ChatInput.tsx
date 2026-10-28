@@ -148,7 +148,7 @@ function ChatInput({
   )
 
   return (
-    <div className="sticky bottom-0 mx-auto w-full max-w-3xl rounded-t-[26px] bg-transparent bg-[image:radial-gradient(transparent_1px,#fff_1px)] bg-[length:4px_4px] pb-6 backdrop-blur-[4px] backdrop-saturate-50">
+    <div className="sticky bottom-0 mx-auto w-full max-w-3xl rounded-t-[26px] bg-transparent bg-[image:radial-gradient(transparent_1px,#fff_1px)] bg-[length:4px_4px] px-4 pb-6 backdrop-blur-[4px] backdrop-saturate-50">
       <form
         ref={formRef}
         onSubmit={handleSubmit}

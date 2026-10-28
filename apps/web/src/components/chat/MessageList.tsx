@@ -1,5 +1,16 @@
 import type { ChatAddToolApproveResponseFunction } from 'ai'
 
+import { ArrowDown } from 'lucide-react'
+
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport
+} from '@/components/ui/message-scroller'
+
 import type { ChatUIMessage } from '@/types/chat'
 
 import MessageBubble from './MessageBubble'
@@ -22,22 +33,44 @@ function MessageList({
   streamingMessageId = null
 }: MessageListProps) {
   return (
-    <div className="mx-auto flex w-full flex-1 max-w-3xl flex-col gap-6 py-8">
-      {messages.map(message => (
-        <MessageBubble
-          key={message.id}
-          message={message}
-          addToolApprovalResponse={
-            addToolApprovalResponse
-          }
-          isStreaming={
-            message.id === streamingMessageId
-          }
-        />
-      ))}
+    <MessageScrollerProvider
+      autoScroll
+      defaultScrollPosition="end"
+    >
+      <MessageScroller className="min-h-0 flex-1">
+        <MessageScrollerViewport>
+          <MessageScrollerContent className="mx-auto w-full max-w-3xl px-4 py-6">
+            {messages.map(message => (
+              <MessageScrollerItem
+                key={message.id}
+                messageId={message.id}
+                scrollAnchor={message.role === 'user'}
+              >
+                <MessageBubble
+                  message={message}
+                  addToolApprovalResponse={
+                    addToolApprovalResponse
+                  }
+                  isStreaming={
+                    message.id === streamingMessageId
+                  }
+                />
+              </MessageScrollerItem>
+            ))}
 
-      {isThinking && <TypingIndicator />}
-    </div>
+            {isThinking && <TypingIndicator />}
+          </MessageScrollerContent>
+        </MessageScrollerViewport>
+
+        <MessageScrollerButton
+          variant="outline"
+          size="icon"
+          className="rounded-full bg-background/90 shadow-md backdrop-blur"
+        >
+          <ArrowDown />
+        </MessageScrollerButton>
+      </MessageScroller>
+    </MessageScrollerProvider>
   )
 }
 

@@ -7,8 +7,18 @@ import type { ChatAddToolApproveResponseFunction } from 'ai'
 import type { ChatUIMessage } from '@/types/chat'
 
 import { Button } from '@/components/ui/button'
+import {
+  Bubble,
+  BubbleContent
+} from '@/components/ui/bubble'
+import {
+  Message,
+  MessageContent
+} from '@/components/ui/message'
 
 import AgentTrace from '../agent/AgentTrace'
+
+import ChainOfThought from './ChainOfThought'
 
 import ToolPartRenderer from './ToolPartRenderer'
 
@@ -27,8 +37,7 @@ function MessageBubble({
   addToolApprovalResponse,
   isStreaming = false
 }: MessageBubbleProps) {
-  const isUser =
-    message.role === 'user'
+  const isUser = message.role === 'user'
 
   const runId = message.parts.find(
     part => part.type === 'data-agentRun'
@@ -38,22 +47,10 @@ function MessageBubble({
     useState(false)
 
   return (
-    <div
-      className={
-        isUser
-          ? 'flex justify-end'
-          : 'flex justify-start'
-      }
-    >
-      <div
-        className={
-          isUser
-            ? 'max-w-[100%] rounded-[26px] bg-primary px-4 py-2 text-primary-foreground'
-            : 'w-full py-3'
-        }
-      >
+    <Message align={isUser ? 'end' : 'start'}>
+      <MessageContent>
         {!isUser && runId && (
-          <div className="mb-2 flex justify-start">
+          <div className="flex justify-start">
             <Button
               variant="secondary"
               size="xs"
@@ -68,39 +65,44 @@ function MessageBubble({
         )}
 
         {!isUser && showTrace && runId && (
-          <div className="my-3 rounded-[26px] border p-3">
+          <div className="rounded-xl border p-3">
             <AgentTrace runId={runId} />
           </div>
         )}
 
-        {message.parts.map(
-          (part, index) => {
-            if (
-              part.type === 'text'
-            ) {
-              return isUser ? (
-                <div
-                  key={index}
-                  className="whitespace-pre-wrap leading-7"
-                >
+        {!isUser && (
+          <ChainOfThought parts={message.parts} />
+        )}
+
+        {message.parts.map((part, index) => {
+          if (part.type === 'text') {
+            return isUser ? (
+              <Bubble
+                key={index}
+                align="end"
+                variant="muted"
+              >
+                <BubbleContent className="whitespace-pre-wrap leading-7">
                   {part.text}
-                </div>
-              ) : (
-                <TypewriterMarkdown
-                  key={index}
-                  content={part.text}
-                  active={isStreaming}
-                />
-              )
-            }
+                </BubbleContent>
+              </Bubble>
+            ) : (
+              <TypewriterMarkdown
+                key={index}
+                content={part.text}
+                active={isStreaming}
+              />
+            )
+          }
 
-            if (
-              part.type === 'data-agentStep' ||
-              part.type === 'data-agentRun'
-            ) {
-              return null
-            }
+          if (
+            part.type === 'data-agentStep' ||
+            part.type === 'data-agentRun'
+          ) {
+            return null
+          }
 
+          if (part.type === 'tool-createTicket') {
             return (
               <ToolPartRenderer
                 key={index}
@@ -111,9 +113,11 @@ function MessageBubble({
               />
             )
           }
-        )}
-      </div>
-    </div>
+
+          return null
+        })}
+      </MessageContent>
+    </Message>
   )
 }
 

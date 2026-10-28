@@ -62,9 +62,11 @@ function NewChatPage() {
   }
 
   return (
-    <>
+    <div className="flex min-h-0 flex-1 flex-col">
       <ErrorBoundary>
-        <ChatWelcome />
+        <div className="flex min-h-0 flex-1 items-center justify-center">
+          <ChatWelcome />
+        </div>
       </ErrorBoundary>
 
       {error && (
@@ -79,7 +81,7 @@ function NewChatPage() {
         onChange={setInput}
         onSubmit={handleSubmit}
       />
-    </>
+    </div>
   )
 }
 
